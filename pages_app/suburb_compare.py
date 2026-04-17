@@ -90,7 +90,7 @@ def show(db):
         height=400,
     )
     fig.update_yaxes(tickprefix="$", gridcolor="rgba(128,128,128,0.1)")
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
     # ── Table ────────────────────────────────────────────────────────────────
     st.markdown("---")
@@ -105,5 +105,5 @@ def show(db):
     display = display.rename(columns={"item": "Item"})
     st.dataframe(
         display[["Item", suburb_a, suburb_b, "Difference"]],
-        use_container_width=True, hide_index=True,
+        width="stretch", hide_index=True,
     )

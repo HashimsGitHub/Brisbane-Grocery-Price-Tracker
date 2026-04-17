@@ -93,7 +93,7 @@ def show(db):
 
         st.caption("Your submission is anonymous. We store a one-way hash so you can't submit the same item twice in 1 hour.")
 
-        submitted = st.form_submit_button("Submit price", type="primary", use_container_width=True)
+        submitted = st.form_submit_button("Submit price", type="primary", width="stretch")
 
     if submitted:
         suburb = custom_suburb.strip() if custom_suburb.strip() else suburb_input

@@ -81,7 +81,7 @@ def show(db):
             )
             st.dataframe(
                 movers_df[["Item", "Last week", "This week", "Change %"]],
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
             )
         else:
@@ -115,7 +115,7 @@ def show(db):
                 plot_bgcolor="rgba(0,0,0,0)",
                 paper_bgcolor="rgba(0,0,0,0)",
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
         else:
             st.info("No data yet!")
 
@@ -163,7 +163,7 @@ def show(db):
                 "store": "Store", "suburb": "Suburb", "state": "State",
                 "submitted_at": "Submitted",
             }),
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
         )
     else:

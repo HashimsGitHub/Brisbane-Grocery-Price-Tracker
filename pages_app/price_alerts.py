@@ -93,7 +93,7 @@ def show(db):
         margin=dict(l=0, r=0, t=10, b=0),
     )
     fig.update_xaxes(ticksuffix="%")
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
     # ── Table ─────────────────────────────────────────────────────────────────
     st.markdown("---")
@@ -101,4 +101,4 @@ def show(db):
     display["Previous avg"] = display["Previous avg"].apply(lambda x: f"${x:.2f}")
     display["Current avg"]  = display["Current avg"].apply(lambda x: f"${x:.2f}")
     display["Change %"]     = display["Change %"].apply(lambda x: f"🔺 +{x:.1f}%")
-    st.dataframe(display, use_container_width=True, hide_index=True)
+    st.dataframe(display, width="stretch", hide_index=True)

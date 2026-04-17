@@ -77,7 +77,7 @@ def show(db):
         xaxis_tickangle=-25,
     )
     fig.update_yaxes(tickprefix="$", gridcolor="rgba(128,128,128,0.1)")
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
     # ── Per-item heatmap ──────────────────────────────────────────────────────
     st.markdown("---")
@@ -118,10 +118,10 @@ def show(db):
             xaxis_tickangle=-35,
             height=max(300, len(heat) * 40 + 100),
         )
-        st.plotly_chart(fig2, use_container_width=True)
+        st.plotly_chart(fig2, width="stretch")
 
     # ── Table ─────────────────────────────────────────────────────────────────
     st.markdown("---")
     display = df.copy()
     display["Avg price"] = display["Avg price"].apply(lambda x: f"${x:.2f}")
-    st.dataframe(display, use_container_width=True, hide_index=True)
+    st.dataframe(display, width="stretch", hide_index=True)

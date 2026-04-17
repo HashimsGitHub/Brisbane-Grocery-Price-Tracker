@@ -109,7 +109,7 @@ def show(db):
     )
     fig.update_xaxes(showgrid=True, gridcolor="rgba(128,128,128,0.1)")
     fig.update_yaxes(showgrid=True, gridcolor="rgba(128,128,128,0.1)", tickprefix="$")
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
     # ── Price by store ────────────────────────────────────────────────────────
     st.markdown("---")
@@ -127,7 +127,7 @@ def show(db):
         coloraxis_showscale=False, margin=dict(l=0, r=0, t=10, b=0),
     )
     fig2.update_yaxes(tickprefix="$")
-    st.plotly_chart(fig2, use_container_width=True)
+    st.plotly_chart(fig2, width="stretch")
 
     # ── Raw data table ────────────────────────────────────────────────────────
     with st.expander("View raw submissions"):
@@ -140,5 +140,5 @@ def show(db):
                 "store": "Store", "suburb": "Suburb", "state": "State",
                 "submitted_at": "Submitted",
             }),
-            use_container_width=True, hide_index=True,
+            width="stretch", hide_index=True,
         )
