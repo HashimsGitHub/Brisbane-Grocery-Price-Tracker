@@ -132,6 +132,17 @@ def main():
     if not os.path.exists(args.file):
         print(f"File not found: {args.file}"); sys.exit(1)
 
+    # Hard block: the 2025 file contains basket totals, not item prices.
+    # Ingesting it corrupts data quality.
+    if '2025' in os.path.basename(args.file):
+        print(
+            "ERROR: Refusing to ingest a 2025 file.\n"
+            "Expense_Tracker_2025.xlsx contains basket-level store totals, "
+            "not individual item prices. Use Expense_Tracker_2024.xlsx only.\n"
+            "To remove already-ingested 2025 data, run: python purge_2025_data.py"
+        )
+        sys.exit(1)
+
     print(f"Reading: {args.file}")
     records = extract(args.file)
     print(f"Extracted {len(records)} records")
