@@ -23,7 +23,7 @@ def _ensure_indexes(db):
         pass
     prices.create_index(
         [("submitted_at", ASCENDING)],
-        expireAfterSeconds=60 * 60 * 24 * 365 * 3,
+        expireAfterSeconds=60 * 60 * 24 * 365 * 10,
         name="ttl_6months",
     )
 
