@@ -1,7 +1,5 @@
 import streamlit as st
 from pymongo import MongoClient, ASCENDING, DESCENDING, TEXT, GEOSPHERE
-from pymongo.errors import CollectionInvalid
-from datetime import datetime, timedelta
 
 
 @st.cache_resource
@@ -15,36 +13,35 @@ def get_db():
 
 
 def _ensure_indexes(db):
-    # ── prices collection ────────────────────────────────────────────────────
     prices = db["prices"]
 
-    # TTL: auto-delete entries older than 6 months
+    # Drop old 6-month TTL index if it exists, recreate with 3-year expiry
+    # so historical seed data (2024) is never auto-deleted
+    try:
+        prices.drop_index("ttl_6months")
+    except Exception:
+        pass
     prices.create_index(
         [("submitted_at", ASCENDING)],
-        expireAfterSeconds=60 * 60 * 24 * 180,
+        expireAfterSeconds=60 * 60 * 24 * 365 * 3,
         name="ttl_6months",
     )
-    # Text search on item name
+
     prices.create_index([("item_name", TEXT)], name="text_item")
-    # Compound for fast trend queries
     prices.create_index(
         [("item_name", ASCENDING), ("submitted_at", DESCENDING)],
         name="item_time",
     )
-    # Suburb-level queries
     prices.create_index(
         [("suburb", ASCENDING), ("item_name", ASCENDING)],
         name="suburb_item",
     )
-    # 2dsphere for geo queries (requires location field as GeoJSON)
     prices.create_index([("location", GEOSPHERE)], name="geo")
 
-    # ── items collection ─────────────────────────────────────────────────────
     items = db["items"]
     items.create_index([("name", ASCENDING)], unique=True, name="item_name_unique")
     items.create_index([("aliases", ASCENDING)], name="aliases")
 
-    # ── suburbs collection ───────────────────────────────────────────────────
     suburbs = db["suburbs"]
     suburbs.create_index(
         [("name", ASCENDING), ("state", ASCENDING)],
@@ -59,25 +56,25 @@ def _seed_items(db):
         return
 
     seed = [
-        {"name": "Full Cream Milk 2L",  "category": "Dairy",    "aliases": ["milk", "full cream milk", "2l milk"],         "unit_default": "each"},
-        {"name": "White Bread Loaf",     "category": "Bakery",   "aliases": ["bread", "white bread", "toast bread"],        "unit_default": "each"},
-        {"name": "Free Range Eggs 12pk", "category": "Dairy",    "aliases": ["eggs", "12 eggs", "dozen eggs"],              "unit_default": "each"},
-        {"name": "Chicken Breast",       "category": "Meat",     "aliases": ["chicken", "chicken breast", "chicken fillet"],"unit_default": "kg"},
-        {"name": "Beef Mince 500g",      "category": "Meat",     "aliases": ["mince", "beef mince", "ground beef"],         "unit_default": "each"},
-        {"name": "Cheddar Cheese 500g",  "category": "Dairy",    "aliases": ["cheese", "cheddar", "tasty cheese"],          "unit_default": "each"},
-        {"name": "Butter 500g",          "category": "Dairy",    "aliases": ["butter"],                                     "unit_default": "each"},
-        {"name": "White Rice 1kg",       "category": "Pantry",   "aliases": ["rice", "white rice", "jasmine rice"],         "unit_default": "each"},
-        {"name": "Pasta 500g",           "category": "Pantry",   "aliases": ["pasta", "spaghetti", "penne"],                "unit_default": "each"},
-        {"name": "Tinned Tomatoes 400g", "category": "Pantry",   "aliases": ["tinned tomatoes", "canned tomatoes"],         "unit_default": "each"},
-        {"name": "Olive Oil 750ml",      "category": "Pantry",   "aliases": ["olive oil", "oil"],                           "unit_default": "each"},
-        {"name": "Bananas",              "category": "Produce",  "aliases": ["banana", "bananas"],                          "unit_default": "kg"},
-        {"name": "Tomatoes",             "category": "Produce",  "aliases": ["tomato", "tomatoes"],                         "unit_default": "kg"},
-        {"name": "Potatoes 2kg",         "category": "Produce",  "aliases": ["potatoes", "spuds"],                          "unit_default": "each"},
-        {"name": "Carrots 1kg",          "category": "Produce",  "aliases": ["carrots", "carrot"],                          "unit_default": "each"},
-        {"name": "Orange Juice 2L",      "category": "Drinks",   "aliases": ["oj", "orange juice"],                         "unit_default": "each"},
-        {"name": "Coca-Cola 1.25L",      "category": "Drinks",   "aliases": ["coke", "coca cola", "cola"],                  "unit_default": "each"},
-        {"name": "Unleaded Petrol",      "category": "Fuel",     "aliases": ["petrol", "91 unleaded", "unleaded"],          "unit_default": "L"},
-        {"name": "Premium Petrol",       "category": "Fuel",     "aliases": ["premium", "98", "e10"],                       "unit_default": "L"},
-        {"name": "Diesel",               "category": "Fuel",     "aliases": ["diesel"],                                     "unit_default": "L"},
+        {"name": "Full Cream Milk 2L",  "category": "Dairy",   "aliases": ["milk", "full cream milk", "2l milk"],          "unit_default": "each"},
+        {"name": "White Bread Loaf",     "category": "Bakery",  "aliases": ["bread", "white bread", "toast bread"],         "unit_default": "each"},
+        {"name": "Free Range Eggs 12pk", "category": "Dairy",   "aliases": ["eggs", "12 eggs", "dozen eggs"],               "unit_default": "each"},
+        {"name": "Chicken Breast",       "category": "Meat",    "aliases": ["chicken", "chicken breast", "chicken fillet"], "unit_default": "kg"},
+        {"name": "Beef Mince 500g",      "category": "Meat",    "aliases": ["mince", "beef mince", "ground beef"],          "unit_default": "each"},
+        {"name": "Cheddar Cheese 500g",  "category": "Dairy",   "aliases": ["cheese", "cheddar", "tasty cheese"],           "unit_default": "each"},
+        {"name": "Butter 500g",          "category": "Dairy",   "aliases": ["butter"],                                      "unit_default": "each"},
+        {"name": "White Rice 1kg",       "category": "Pantry",  "aliases": ["rice", "white rice", "jasmine rice"],          "unit_default": "each"},
+        {"name": "Pasta 500g",           "category": "Pantry",  "aliases": ["pasta", "spaghetti", "penne"],                 "unit_default": "each"},
+        {"name": "Tinned Tomatoes 400g", "category": "Pantry",  "aliases": ["tinned tomatoes", "canned tomatoes"],          "unit_default": "each"},
+        {"name": "Olive Oil 750ml",      "category": "Pantry",  "aliases": ["olive oil", "oil"],                            "unit_default": "each"},
+        {"name": "Bananas",              "category": "Produce", "aliases": ["banana", "bananas"],                           "unit_default": "kg"},
+        {"name": "Tomatoes",             "category": "Produce", "aliases": ["tomato", "tomatoes"],                          "unit_default": "kg"},
+        {"name": "Potatoes 2kg",         "category": "Produce", "aliases": ["potatoes", "spuds"],                           "unit_default": "each"},
+        {"name": "Carrots 1kg",          "category": "Produce", "aliases": ["carrots", "carrot"],                           "unit_default": "each"},
+        {"name": "Orange Juice 2L",      "category": "Drinks",  "aliases": ["oj", "orange juice"],                         "unit_default": "each"},
+        {"name": "Coca-Cola 1.25L",      "category": "Drinks",  "aliases": ["coke", "coca cola", "cola"],                  "unit_default": "each"},
+        {"name": "Unleaded Petrol",      "category": "Fuel",    "aliases": ["petrol", "91 unleaded", "unleaded"],           "unit_default": "L"},
+        {"name": "Premium Petrol",       "category": "Fuel",    "aliases": ["premium", "98", "e10"],                        "unit_default": "L"},
+        {"name": "Diesel",               "category": "Fuel",    "aliases": ["diesel"],                                      "unit_default": "L"},
     ]
     db["items"].insert_many(seed)
