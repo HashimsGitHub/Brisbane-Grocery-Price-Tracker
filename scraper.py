@@ -116,7 +116,7 @@ _BLOCKLIST = {
     "toothpaste", "razor", "deodorant", "sunscreen", "cosmetic", "makeup",
     "vitamin", "supplement", "protein powder", "medicine", "tablet",
     "capsule", "bandage", "first aid", "pet food", "dog food", "cat food",
-    "plant", "seed", "fertiliser", "pot", "shopping cart",
+    "plant", "seed", "fertiliser", "pot", "shopping cart", "grocery shop",
 }
 
 
