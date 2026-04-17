@@ -248,8 +248,15 @@ def main():
     deleted = db['prices'].delete_many({'user_hash':'seed_data'}).deleted_count
     print(f"Removed {deleted} previous seed records")
 
-    db['prices'].insert_many(all_records)
-    print(f"Inserted {len(all_records)} records")
+    inserted = 0
+    for i in range(0, len(all_records), 50):
+        batch = all_records[i:i+50]
+        try:
+            result = db['prices'].insert_many(batch)
+            inserted += len(result.inserted_ids)
+        except Exception as e:
+            print(f"Error on batch {i//50}: {e}")
+    print(f"Inserted {inserted} records")
 
     seen = {r['item_name']: r['category'] for r in all_records}
     new_items = sum(
