@@ -106,21 +106,57 @@ def _woolworths_flatten(raw: dict) -> list:
     return out
 
 
+# Words that indicate a result is NOT a grocery product.
+_BLOCKLIST = {
+    "bag", "bags", "carry", "foldable", "reusable", "trolley", "basket",
+    "toy", "melissa", "doug", "game", "gift", "book", "magazine", "dvd",
+    "utensil", "container", "storage", "cleaning cloth", "sponge", "brush",
+    "mop", "broom", "bin", "candle", "diffuser", "detergent", "laundry",
+    "nappy", "diaper", "shampoo", "conditioner", "bodywash", "soap",
+    "toothpaste", "razor", "deodorant", "sunscreen", "cosmetic", "makeup",
+    "vitamin", "supplement", "protein powder", "medicine", "tablet",
+    "capsule", "bandage", "first aid", "pet food", "dog food", "cat food",
+    "plant", "seed", "fertiliser", "pot", "shopping cart",
+}
+
+
+def _is_blocked(name: str) -> bool:
+    name_lower = name.lower()
+    return any(term in name_lower for term in _BLOCKLIST)
+
+
+def _match_score(name: str, search_term: str) -> int:
+    """Count how many search keywords appear in the product name."""
+    name_lower = name.lower()
+    keywords = [w.lower() for w in search_term.split()
+                if len(w) > 2 and w.lower() not in {"per", "the", "and", "for"}]
+    return sum(1 for kw in keywords if kw in name_lower)
+
+
 def _best_match(products: list, search_term: str,
                 name_key: str = "Name", price_key: str = "Price") -> Optional[dict]:
-    """Return the first product whose name contains a search keyword and has a price."""
-    words = [w.lower() for w in search_term.split() if len(w) > 2]
+    """
+    Return the best matching product with strict validation:
+    - Must score >= 1 (at least one keyword in product name)
+    - Must NOT match the blocklist
+    - NO fallback to unrelated products — returns None if nothing qualifies
+    """
+    scored = []
     for p in products:
-        name  = (p.get(name_key) or p.get(name_key.lower()) or "").lower()
+        name  = (p.get(name_key) or p.get(name_key.lower()) or "").strip()
         price = p.get(price_key) or p.get(price_key.lower())
-        if price and float(price) > 0 and any(w in name for w in words):
-            return p
-    # Fallback: any product with a price
-    for p in products:
-        price = p.get(price_key) or p.get(price_key.lower())
-        if price and float(price) > 0:
-            return p
-    return None
+        if not name or not price or float(price) <= 0:
+            continue
+        if _is_blocked(name):
+            logger.debug(f"Blocked irrelevant result: '{name}'")
+            continue
+        score = _match_score(name, search_term)
+        if score > 0:
+            scored.append((score, p))
+    if not scored:
+        return None
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return scored[0][1]
 
 
 def scrape_woolworths(item: dict, store_id: str) -> Optional[Tuple[float, str, str]]:
@@ -201,22 +237,25 @@ def scrape_coles(item: dict, store_id: str) -> Optional[Tuple[float, str, str]]:
                 "_size": r.get("size") or r.get("packageSize") or "",
             })
 
-    words = [w.lower() for w in search_term.split() if len(w) > 2]
-    match = None
-    for p in flat:
-        if p["_price"] > 0 and any(w in p["_name"].lower() for w in words):
-            match = p
-            break
-    if not match:
-        match = next((p for p in flat if p["_price"] > 0), None)
-
+    # Use the same strict matching — build normalised dicts for _best_match
+    normalised = [{"Name": p["_name"], "Price": p["_price"], "_size": p["_size"]} for p in flat]
+    match = _best_match(normalised, search_term, name_key="Name", price_key="Price")
     if not match:
         return None
 
-    return match["_price"], _infer_unit(match["_size"], item), match["_name"]
+    return match["Price"], _infer_unit(match.get("_size", ""), item), match["Name"]
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+# Plausible price range for any grocery item ($0.50 – $150)
+_MIN_PRICE = 0.50
+_MAX_PRICE = 150.00
+
+
+def _price_is_sane(price: float) -> bool:
+    return _MIN_PRICE <= price <= _MAX_PRICE
+
 
 def _infer_unit(size_str: str, item: dict) -> str:
     s = (size_str or "").lower()
@@ -325,6 +364,13 @@ def run_scrape(db, progress_callback=None, stores: list = None) -> dict:
                 continue
 
             price, unit, product_name = result
+
+            # Reject implausible prices
+            if not _price_is_sane(price):
+                logger.warning(f"Rejected insane price ${price} for {item['name']} from {product_name}")
+                results["skipped"] += 1
+                continue
+
             doc = _make_doc(item, price, unit, product_name, store_label, suburb, store_id)
 
             if _is_duplicate(db, doc):
