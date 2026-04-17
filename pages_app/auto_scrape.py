@@ -6,11 +6,7 @@ import streamlit as st
 from datetime import datetime, timezone, timedelta
 import pandas as pd
 
-from scraper import (
-    run_scrape,
-    WOOLWORTHS_SAMPLE_STORES,
-    COLES_BRISBANE_STORES,
-)
+from scraper import run_scrape, WOOLWORTHS_SAMPLE_STORES, COLES_BRISBANE_STORES
 
 
 def show(db):
@@ -20,33 +16,47 @@ def show(db):
         "for all tracked items across Brisbane stores."
     )
 
-    with st.expander("ℹ️  How it works & hosting requirements", expanded=False):
-        st.markdown(
-            """
-**What it does**
-- Fetches prices from the Woolworths and Coles online search APIs.
-- Only scrapes items already in the database — no new items are added.
-- **Fuel** is excluded (petrol prices need a dedicated source like FuelWatch).
-- Deduplicated: same store + item scraped within 6 hours is skipped.
-- All records are tagged `source: auto_scrape`.
-
-**⚠️  Hosting requirement — read if you see 403 errors**
-
-Woolworths and Coles **block requests from shared cloud IPs** (e.g. Streamlit Community Cloud).
-
-Options:
-1. **Run locally** — `streamlit run app.py` on your own machine works fine.
-2. **Residential proxy** — add to `.streamlit/secrets.toml`:
-   ```toml
-   SCRAPER_PROXY = "http://user:pass@host:port"
-   ```
-3. **VPS** (DigitalOcean, Hetzner, etc.) with a residential/fresh IP.
-            """
+    # ── Proxy status banner ────────────────────────────────────────────────────
+    proxy = _get_proxy()
+    if proxy:
+        st.success(f"🔀 Proxy configured — requests will route through your proxy.")
+    else:
+        st.info(
+            "💡 **No proxy configured.** The scraper uses Chrome TLS impersonation "
+            "(`curl_cffi`) to bypass bot detection. If you still see 403 errors on "
+            "Streamlit Cloud, add a proxy — see the expander below.",
+            icon="ℹ️",
         )
+
+    with st.expander("⚙️  Setup & troubleshooting"):
+        st.markdown("""
+### How it works
+- Fetches prices from the Woolworths and Coles search APIs using a real Chrome TLS fingerprint.
+- Only scrapes items already in your database. Fuel is excluded.
+- Deduplicates: same store + item scraped within 6 hours is skipped.
+- All records tagged `source: auto_scrape`.
+
+### If you see 403 errors on Streamlit Cloud
+Woolworths / Coles may still block Streamlit Cloud IPs even with TLS impersonation.
+Add a proxy to **`.streamlit/secrets.toml`**:
+
+```toml
+SCRAPER_PROXY = "http://username:password@proxy-host:port"
+```
+
+**Free / cheap proxy options:**
+| Service | Free tier | Notes |
+|---|---|---|
+| [ScraperAPI](https://scraperapi.com) | 1,000 req/mo | Use API key as password |
+| [Zyte Smart Proxy](https://www.zyte.com/smart-proxy-manager/) | Trial available | Best AU coverage |
+| [Webshare](https://webshare.io) | 10 free proxies | Residential available |
+
+**Or just run locally** — `streamlit run app.py` on your home network always works.
+        """)
 
     st.divider()
 
-    # Store selection
+    # ── Store selection ────────────────────────────────────────────────────────
     st.subheader("🏪 Select Stores to Scrape")
     col1, col2 = st.columns(2)
 
@@ -75,11 +85,11 @@ Options:
 
     items = list(db["items"].find({"category": {"$ne": "Fuel"}}, {"name": 1, "_id": 0}))
     n_items = len(items)
-    n_req = n_items * len(selected_stores)
+    n_req   = n_items * len(selected_stores)
     est_min = round(n_req * 1.0 / 60, 1)
     st.info(f"**{n_items}** items × **{len(selected_stores)}** stores = **{n_req}** requests (~{est_min} min)")
 
-    # Last scrape status
+    # ── Last scrape status ─────────────────────────────────────────────────────
     last = db["prices"].find_one({"source": "auto_scrape"}, sort=[("submitted_at", -1)])
     if last:
         ts = last["submitted_at"]
@@ -88,7 +98,7 @@ Options:
         age = datetime.now(timezone.utc) - ts
         st.success(f"✅ Last scrape: **{_fmt_age(age)} ago** ({ts.strftime('%d %b %Y %H:%M')} UTC)")
     else:
-        st.warning("No auto-scraped data in the database yet.")
+        st.warning("No auto-scraped data yet.")
 
     st.divider()
 
@@ -99,10 +109,10 @@ Options:
     if st.button(f"🚀 Start Scraping ({n_req} requests)", type="primary", use_container_width=True):
         _run_with_ui(db, selected_stores)
 
-    # Recent results table
+    # ── Recent results table ───────────────────────────────────────────────────
     st.divider()
     st.subheader("📋 Recent Auto-Scraped Prices (last 24 h)")
-    since = datetime.utcnow() - timedelta(hours=24)
+    since  = datetime.utcnow() - timedelta(hours=24)
     recent = list(
         db["prices"].find(
             {"source": "auto_scrape", "submitted_at": {"$gte": since}},
@@ -120,6 +130,7 @@ Options:
         })
         df["Price ($)"] = df["Price ($)"].map("${:.2f}".format)
         st.dataframe(df, use_container_width=True, hide_index=True)
+        st.caption(f"{len(recent)} records shown (max 200).")
     else:
         st.info("No auto-scraped prices in the last 24 hours.")
 
@@ -132,10 +143,19 @@ Options:
             st.rerun()
 
 
+# ── Helpers ────────────────────────────────────────────────────────────────────
+
+def _get_proxy() -> str | None:
+    try:
+        return st.secrets.get("SCRAPER_PROXY") or None
+    except Exception:
+        return None
+
+
 def _run_with_ui(db, selected_stores):
     progress_bar = st.progress(0, text="Starting…")
-    log_area = st.empty()
-    log_lines = []
+    log_area     = st.empty()
+    log_lines    = []
 
     def cb(current, total, msg):
         pct = int(current / total * 100)
@@ -153,27 +173,27 @@ def _run_with_ui(db, selected_stores):
     progress_bar.progress(100, text="Done!")
     log_area.empty()
 
-    if results["errors"] > 0 and results["inserted"] == 0:
-        st.error(
-            f"**Scrape failed** — {results['errors']} errors, 0 prices saved. "
-            f"See details below."
-        )
-    elif results["inserted"] > 0:
+    if results["inserted"] > 0:
         st.success(
             f"✅ Done!  **{results['inserted']}** new prices saved, "
             f"**{results['skipped']}** skipped, **{results['errors']}** errors."
         )
         st.balloons()
+    elif results["errors"] > 0:
+        st.error(
+            f"**Scrape failed** — {results['errors']} errors, 0 prices saved. "
+            "See details below."
+        )
     else:
         st.warning(
-            f"Finished but **0 prices saved**. "
-            f"Skipped: {results['skipped']}, Errors: {results['errors']}. Check errors below."
+            f"Finished but 0 prices saved. "
+            f"Skipped: {results['skipped']}, Errors: {results['errors']}."
         )
 
     if results.get("error_messages"):
         with st.expander(f"⚠️  {len(results['error_messages'])} error(s)", expanded=True):
             for msg in results["error_messages"]:
-                if msg.startswith("⚠️"):
+                if msg.startswith("⛔") or msg.startswith("⚠️"):
                     st.warning(msg)
                 else:
                     st.code(msg, language=None)
