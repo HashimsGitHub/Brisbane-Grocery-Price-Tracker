@@ -15,16 +15,15 @@ def get_db():
 def _ensure_indexes(db):
     prices = db["prices"]
 
-    # Drop old 6-month TTL index if it exists, recreate with 3-year expiry
-    # so historical seed data (2024) is never auto-deleted
+    # TTL index: retain price records for 5 years
     try:
         prices.drop_index("ttl_6months")
     except Exception:
         pass
     prices.create_index(
         [("submitted_at", ASCENDING)],
-        expireAfterSeconds=60 * 60 * 24 * 365 * 10,
-        name="ttl_6months",
+        expireAfterSeconds=60 * 60 * 24 * 365 * 5,
+        name="ttl_5years",
     )
 
     prices.create_index([("item_name", TEXT)], name="text_item")

@@ -27,7 +27,7 @@ pages = {
 selection = st.sidebar.radio("Navigate", list(pages.keys()), label_visibility="collapsed")
 
 st.sidebar.markdown("---")
-st.sidebar.caption("Data contributed by the community.\nPrices auto-expire after 6 months.")
+st.sidebar.caption("Data contributed by the community.\nPrices are retained for 5 years.")
 
 # ── Render selected page ─────────────────────────────────────────────────────
 db = get_db()
