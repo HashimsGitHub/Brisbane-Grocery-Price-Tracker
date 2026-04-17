@@ -106,7 +106,7 @@ SCRAPER_PROXY = "http://username:password@proxy-host:port"
         st.error("Select at least one store.")
         return
 
-    if st.button(f"🚀 Start Scraping ({n_req} requests)", type="primary", use_container_width=True):
+    if st.button(f"🚀 Start Scraping ({n_req} requests)", type="primary", width="stretch"):
         _run_with_ui(db, selected_stores)
 
     # ── Recent results table ───────────────────────────────────────────────────
@@ -129,7 +129,7 @@ SCRAPER_PROXY = "http://username:password@proxy-host:port"
             "store": "Store", "suburb": "Suburb", "submitted_at": "Scraped At",
         })
         df["Price ($)"] = df["Price ($)"].map("${:.2f}".format)
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.dataframe(df, width="stretch", hide_index=True)
         st.caption(f"{len(recent)} records shown (max 200).")
     else:
         st.info("No auto-scraped prices in the last 24 hours.")
