@@ -1,44 +1,35 @@
 """
 scraper.py  –  Auto-scrape grocery prices from Woolworths & Coles (Brisbane)
 ─────────────────────────────────────────────────────────────────────────────
-Strategy
-  • Woolworths  → undocumented JSON search API  (no JS rendering needed)
-  • Coles       → undocumented JSON search API  (no JS rendering needed)
+Both retailers expose JSON search APIs used by their own websites.
+We replicate the same headers a real browser sends.
 
-Both APIs are freely accessible from a browser; we replicate the same
-headers a real browser sends.  No login is required for price data.
-
-The scraper only looks up the canonical items already stored in MongoDB
-(db["items"]) and writes results back into db["prices"] with
-  source = "auto_scrape"
-so they are clearly distinguished from crowdsourced entries.
-
-Brisbane store filtering
-  Woolworths uses a "storeId" for each location.  We store a curated list
-  of Brisbane store IDs so results reflect local pricing.
-  Coles returns national prices from its search API (prices don't vary
-  per-store in their online catalogue), so we tag those as "Brisbane" and
-  flag them as the Coles online price.
-
-Rate-limiting / politeness
-  • 1-second sleep between items
-  • Exponential back-off on 429 / 5xx
-  • User-Agent is a real Chrome UA
+Error handling philosophy
+  • Network/HTTP errors   → counted as "errors" (not silently skipped)
+  • No matching product   → counted as "skipped"
+  • Duplicate within 6h  → counted as "skipped"
+  • Inserted successfully → counted as "inserted"
 """
 
 import time
 import random
 import logging
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import datetime, timezone, timedelta
+from typing import Optional, Tuple
 
 import requests
 
 logger = logging.getLogger(__name__)
 
-# ── HTTP session ──────────────────────────────────────────────────────────────
+# ── Sentinel to distinguish "failed" from "no match" ─────────────────────────
+class ScrapeError(Exception):
+    """Raised when a network/HTTP error occurs (not a missing product)."""
+    pass
 
-HEADERS = {
+
+# ── HTTP helpers ──────────────────────────────────────────────────────────────
+
+BROWSER_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -46,98 +37,55 @@ HEADERS = {
     ),
     "Accept": "application/json, text/plain, */*",
     "Accept-Language": "en-AU,en;q=0.9",
-    "Referer": "https://www.woolworths.com.au/",
 }
 
-SESSION = requests.Session()
-SESSION.headers.update(HEADERS)
 
+def _get_json(url: str, params: dict = None, extra_headers: dict = None,
+              max_retries: int = 3, timeout: int = 12) -> dict:
+    """
+    GET → JSON with exponential back-off.
+    Raises ScrapeError on HTTP errors or network failures.
+    """
+    headers = {**BROWSER_HEADERS, **(extra_headers or {})}
+    session = requests.Session()
+    session.headers.update(headers)
 
-def _get_with_retry(url: str, params: dict = None, max_retries: int = 3, timeout: int = 10) -> Optional[dict]:
-    """GET with exponential back-off. Returns parsed JSON or None on failure."""
     for attempt in range(max_retries):
         try:
-            r = SESSION.get(url, params=params, timeout=timeout)
-            if r.status_code == 200:
-                return r.json()
-            elif r.status_code in (429, 503):
-                wait = (2 ** attempt) + random.uniform(0, 1)
-                logger.warning(f"Rate-limited ({r.status_code}). Waiting {wait:.1f}s…")
-                time.sleep(wait)
-            elif r.status_code == 403:
-                logger.error(f"403 Forbidden on {url} – site may have blocked this IP.")
-                return None
-            else:
-                logger.warning(f"HTTP {r.status_code} on {url}")
-                return None
-        except requests.exceptions.RequestException as e:
-            logger.warning(f"Request error (attempt {attempt + 1}): {e}")
+            r = session.get(url, params=params, timeout=timeout)
+        except requests.exceptions.RequestException as exc:
+            if attempt == max_retries - 1:
+                raise ScrapeError(f"Network error after {max_retries} attempts: {exc}") from exc
             time.sleep(2 ** attempt)
-    return None
+            continue
+
+        if r.status_code == 200:
+            try:
+                return r.json()
+            except ValueError as exc:
+                raise ScrapeError(f"JSON decode error: {exc}") from exc
+
+        elif r.status_code in (429, 503):
+            wait = (2 ** attempt) + random.uniform(0, 1)
+            logger.warning(f"Rate-limited ({r.status_code}) – waiting {wait:.1f}s")
+            time.sleep(wait)
+
+        elif r.status_code == 403:
+            raise ScrapeError(
+                f"403 Forbidden – the retailer's server blocked this request. "
+                f"This usually means the hosting environment's IP is blocked. "
+                f"Try running locally or adding a proxy."
+            )
+        else:
+            raise ScrapeError(f"HTTP {r.status_code} from {url}")
+
+    raise ScrapeError(f"Gave up after {max_retries} retries")
 
 
 # ── Woolworths ────────────────────────────────────────────────────────────────
-# Woolworths search API returns JSON with a "Products" list.
-# Each product has:   Name, Price, WasPrice, CupPrice, CupMeasure, Stockcode
 
 WOOLWORTHS_SEARCH_URL = "https://www.woolworths.com.au/apis/ui/Search/products"
 
-# Brisbane Woolworths store IDs (used for stock/availability checks; prices are
-# the same online but storeId scopes results to local range).
-WOOLWORTHS_BRISBANE_STORE_IDS = [
-    "3039",  # Brisbane City
-    "3031",  # South Brisbane
-    "3040",  # Fortitude Valley
-    "4051",  # Toowong
-    "3066",  # West End / Boundary St
-    "4102",  # Woolloongabba
-    "4053",  # Paddington
-    "4068",  # St Lucia
-    "4069",  # Indooroopilly
-    "4152",  # Carindale
-    "4122",  # Mount Gravatt
-    "4151",  # Greenslopes
-    "4105",  # Moorooka
-    "4108",  # Sunnybank
-    "4109",  # Robertson
-    "4034",  # Chermside
-    "4032",  # Aspley
-    "4030",  # Kedron
-    "4012",  # Nundah
-    "4017",  # Sandgate
-    "4020",  # Redcliffe
-    "4500",  # Strathpine / North Lakes
-    "4503",  # Caboolture
-]
-
-# Suburb labels paired with store IDs for writing to MongoDB
-WOOLWORTHS_STORE_MAP = {
-    "3039": "Brisbane CBD",
-    "3031": "South Brisbane",
-    "3040": "Fortitude Valley",
-    "4051": "Toowong",
-    "3066": "West End",
-    "4102": "Woolloongabba",
-    "4053": "Paddington",
-    "4068": "St Lucia",
-    "4069": "Indooroopilly",
-    "4152": "Carindale",
-    "4122": "Mount Gravatt",
-    "4151": "Greenslopes",
-    "4105": "Moorooka",
-    "4108": "Sunnybank",
-    "4109": "Robertson",
-    "4034": "Chermside",
-    "4032": "Aspley",
-    "4030": "Kedron",
-    "4012": "Nundah",
-    "4017": "Sandgate",
-    "4020": "Redcliffe",
-    "4500": "Strathpine",
-    "4503": "Caboolture",
-}
-
-# We pick a representative subset of Brisbane stores to avoid hammering the API
 WOOLWORTHS_SAMPLE_STORES = [
     ("3039", "Brisbane CBD"),
     ("4051", "Toowong"),
@@ -149,105 +97,79 @@ WOOLWORTHS_SAMPLE_STORES = [
 ]
 
 
+def _woolworths_flatten_products(raw: dict) -> list:
+    """
+    Woolworths response structure (as of 2024–2025):
+      { "Products": [ { "Products": [ {...product...}, ... ] }, ... ] }
+    OR sometimes the inner list is at the top level.
+    Return a flat list of individual product dicts.
+    """
+    products = []
+    top = raw.get("Products") or raw.get("products") or []
+    for group in top:
+        if isinstance(group, dict):
+            inner = group.get("Products") or group.get("products")
+            if inner and isinstance(inner, list):
+                products.extend(inner)
+            elif group.get("Price") or group.get("price"):
+                products.append(group)
+    return products
+
+
 def _woolworths_best_match(products: list, search_term: str) -> Optional[dict]:
-    """Return the first in-stock, clearly matching product."""
-    search_lower = search_term.lower()
+    """Return the best-matching product that has a valid price."""
+    words = [w.lower() for w in search_term.split() if len(w) > 2]
+
+    # Pass 1 – must contain at least one keyword and have a price
     for p in products:
-        name = (p.get("Name") or "").lower()
-        price = p.get("Price")
-        available = p.get("IsInStock", True)
-        if price and price > 0 and available:
-            # Prefer products whose name contains key words from the search
-            words = [w for w in search_lower.split() if len(w) > 2]
-            if any(w in name for w in words):
-                return p
-    # Fallback: first product with a price
-    for p in products:
-        if p.get("Price") and p.get("Price") > 0:
+        name = (p.get("Name") or p.get("name") or "").lower()
+        price = p.get("Price") or p.get("price")
+        if price and float(price) > 0 and any(w in name for w in words):
             return p
+
+    # Pass 2 – any product with a price
+    for p in products:
+        price = p.get("Price") or p.get("price")
+        if price and float(price) > 0:
+            return p
+
     return None
 
 
-def scrape_woolworths(item: dict, store_id: str, suburb: str) -> Optional[dict]:
+def scrape_woolworths(item: dict, store_id: str) -> Tuple[float, str, str]:
     """
-    Scrape a single item from Woolworths for a given Brisbane store.
-    Returns a price document ready for MongoDB insertion, or None.
+    Returns (price, unit, product_name) or raises ScrapeError / returns None.
     """
-    # Use the first alias as the search term (usually most specific)
-    aliases = item.get("aliases", [])
-    search_term = aliases[0] if aliases else item["name"]
+    search_term = (item.get("aliases") or [item["name"]])[0]
 
-    data = _get_with_retry(
+    raw = _get_json(
         WOOLWORTHS_SEARCH_URL,
         params={
             "searchTerm": search_term,
-            "pageSize": 10,
+            "pageSize": 12,
             "pageNumber": 1,
             "sortType": "TraderRelevance",
             "storeId": store_id,
         },
+        extra_headers={"Referer": "https://www.woolworths.com.au/shop/search/products"},
     )
-    if not data:
-        return None
 
-    products = []
-    try:
-        products = data["Products"]  # list of product groups
-        # Flatten: each group may contain a Products sub-list
-        flat = []
-        for group in products:
-            if isinstance(group, dict):
-                if "Products" in group:
-                    flat.extend(group["Products"])
-                else:
-                    flat.append(group)
-        products = flat
-    except (KeyError, TypeError):
-        return None
+    products = _woolworths_flatten_products(raw)
+    logger.debug(f"Woolworths '{search_term}' → {len(products)} products")
 
     match = _woolworths_best_match(products, search_term)
     if not match:
         return None
 
-    price = match.get("Price")
-    unit = _infer_unit(match.get("PackageSize") or match.get("CupMeasure") or "", item)
-
-    return {
-        "item_name": item["name"],
-        "price": round(float(price), 2),
-        "unit": unit,
-        "store": "Woolworths",
-        "suburb": suburb,
-        "state": "QLD",
-        "submitted_at": datetime.now(timezone.utc),
-        "source": "auto_scrape",
-        "scraped_product_name": match.get("Name"),
-        "store_id": store_id,
-    }
+    price = float(match.get("Price") or match.get("price"))
+    size_str = match.get("PackageSize") or match.get("packageSize") or match.get("CupMeasure") or ""
+    unit = _infer_unit(size_str, item)
+    product_name = match.get("Name") or match.get("name") or ""
+    return price, unit, product_name
 
 
 # ── Coles ─────────────────────────────────────────────────────────────────────
-# Coles search endpoint – prices are national online prices.
-# We tag suburb as "Brisbane (Online)" so it's clear in the UI.
 
-COLES_SEARCH_URL = "https://www.coles.com.au/api/2.0/collections/groceries"
-
-COLES_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "application/json",
-    "Accept-Language": "en-AU,en;q=0.9",
-    "Origin": "https://www.coles.com.au",
-    "Referer": "https://www.coles.com.au/search?q=milk",
-}
-
-COLES_SESSION = requests.Session()
-COLES_SESSION.headers.update(COLES_HEADERS)
-
-# Brisbane Coles store IDs for the /store endpoint (used only for availability)
 COLES_BRISBANE_STORES = [
     ("0587", "Brisbane CBD"),
     ("0579", "South Brisbane"),
@@ -261,176 +183,224 @@ COLES_BRISBANE_STORES = [
     ("0731", "Caboolture"),
 ]
 
+# Coles v2 search – used by their website
+COLES_SEARCH_URL = "https://www.coles.com.au/api/2.0/collections/groceries"
+# Alternate endpoint observed in network traffic
+COLES_SEARCH_URL_V1 = "https://api.coles.com.au/search/v1/search"
 
-def _coles_search(search_term: str, store_id: str = "0587") -> Optional[list]:
-    """Call the Coles search API and return the raw results list."""
-    url = "https://www.coles.com.au/api/2.0/collections/groceries"
-    params = {
-        "q": search_term,
-        "pageSize": 10,
-        "page": 1,
-        "storeId": store_id,
+
+def _coles_search_raw(search_term: str, store_id: str) -> list:
+    """Try Coles v2 then v1 search endpoints. Returns list of result dicts."""
+    headers_extra = {
+        "Origin": "https://www.coles.com.au",
+        "Referer": f"https://www.coles.com.au/search?q={requests.utils.quote(search_term)}",
     }
+
+    # v2 endpoint
     try:
-        r = COLES_SESSION.get(url, params=params, timeout=10)
-        if r.status_code != 200:
-            logger.warning(f"Coles HTTP {r.status_code} for '{search_term}'")
-            return None
-        data = r.json()
-        return data.get("results", [])
-    except Exception as e:
-        logger.warning(f"Coles request error: {e}")
-        return None
+        raw = _get_json(
+            COLES_SEARCH_URL,
+            params={"q": search_term, "pageSize": 12, "page": 1, "storeId": store_id},
+            extra_headers=headers_extra,
+        )
+        results = raw.get("results") or raw.get("catalogGroups") or []
+        if results:
+            return results
+    except ScrapeError:
+        pass  # fall through to v1
+
+    # v1 endpoint
+    raw = _get_json(
+        COLES_SEARCH_URL_V1,
+        params={"term": search_term, "storeId": store_id, "pageSize": 12},
+        extra_headers=headers_extra,
+    )
+    return raw.get("results") or []
 
 
 def _coles_best_match(results: list, search_term: str) -> Optional[dict]:
-    """Return the first result with a valid price."""
-    search_lower = search_term.lower()
-    for item in results:
-        price_info = item.get("pricing") or {}
-        price = price_info.get("now")
+    words = [w.lower() for w in search_term.split() if len(w) > 2]
+
+    def get_price(r):
+        pricing = r.get("pricing") or r.get("price") or {}
+        if isinstance(pricing, dict):
+            return pricing.get("now") or pricing.get("current") or pricing.get("amount")
+        return pricing if isinstance(pricing, (int, float)) else None
+
+    # Pass 1 – keyword match + price
+    for r in results:
+        name = (r.get("name") or r.get("productName") or "").lower()
+        price = get_price(r)
+        if price and float(price) > 0 and any(w in name for w in words):
+            return r
+
+    # Pass 2 – any with price
+    for r in results:
+        price = get_price(r)
         if price and float(price) > 0:
-            name = (item.get("name") or "").lower()
-            words = [w for w in search_lower.split() if len(w) > 2]
-            if any(w in name for w in words):
-                return item
-    # Fallback
-    for item in results:
-        price_info = item.get("pricing") or {}
-        price = price_info.get("now")
-        if price and float(price) > 0:
-            return item
+            return r
+
     return None
 
 
-def scrape_coles(item: dict, store_id: str, suburb: str) -> Optional[dict]:
-    """
-    Scrape a single item from Coles for a given Brisbane store.
-    Returns a price document or None.
-    """
-    aliases = item.get("aliases", [])
-    search_term = aliases[0] if aliases else item["name"]
-
-    results = _coles_search(search_term, store_id)
-    if not results:
-        return None
+def scrape_coles(item: dict, store_id: str) -> Optional[Tuple[float, str, str]]:
+    search_term = (item.get("aliases") or [item["name"]])[0]
+    results = _coles_search_raw(search_term, store_id)
+    logger.debug(f"Coles '{search_term}' → {len(results)} results")
 
     match = _coles_best_match(results, search_term)
     if not match:
         return None
 
-    price_info = match.get("pricing") or {}
-    price = price_info.get("now")
-    unit = _infer_unit(match.get("size") or "", item)
+    pricing = match.get("pricing") or match.get("price") or {}
+    if isinstance(pricing, dict):
+        price = pricing.get("now") or pricing.get("current") or pricing.get("amount")
+    else:
+        price = pricing
 
+    unit = _infer_unit(match.get("size") or match.get("packageSize") or "", item)
+    product_name = match.get("name") or match.get("productName") or ""
+    return float(price), unit, product_name
+
+
+# ── Shared helpers ────────────────────────────────────────────────────────────
+
+def _infer_unit(size_str: str, item: dict) -> str:
+    s = (size_str or "").lower()
+    if "kg" in s:
+        return "kg"
+    if "litre" in s or " l" in s or s.endswith("l"):
+        return "L"
+    if "ml" in s:
+        return "100ml"
+    return item.get("unit_default", "each")
+
+
+def _make_doc(item: dict, price: float, unit: str, product_name: str,
+              store: str, suburb: str, store_id: str) -> dict:
     return {
         "item_name": item["name"],
-        "price": round(float(price), 2),
+        "price": round(price, 2),
         "unit": unit,
-        "store": "Coles",
+        "store": store,
         "suburb": suburb,
         "state": "QLD",
-        "submitted_at": datetime.now(timezone.utc),
+        "submitted_at": datetime.utcnow(),   # naive UTC to match existing records
         "source": "auto_scrape",
-        "scraped_product_name": match.get("name"),
+        "scraped_product_name": product_name,
         "store_id": store_id,
     }
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
-def _infer_unit(size_str: str, item: dict) -> str:
-    """Derive unit from product size string, falling back to item default."""
-    s = (size_str or "").lower()
-    if "kg" in s:
-        return "kg"
-    if " l" in s or s.endswith("l") or "litre" in s:
-        return "L"
-    if "ml" in s:
-        return "100ml"
-    if "g" in s:
-        return "each"  # packaged good – sold by pack
-    return item.get("unit_default", "each")
+def _is_duplicate(db, doc: dict) -> bool:
+    """True if same store+item was auto-scraped in the last 6 hours."""
+    six_hours_ago = datetime.utcnow() - timedelta(hours=6)
+    return bool(db["prices"].find_one({
+        "item_name": doc["item_name"],
+        "store": doc["store"],
+        "suburb": doc["suburb"],
+        "source": "auto_scrape",
+        "submitted_at": {"$gte": six_hours_ago},
+    }))
 
 
-# ── Main scrape orchestrator ──────────────────────────────────────────────────
+# ── Orchestrator ──────────────────────────────────────────────────────────────
 
 def run_scrape(db, progress_callback=None, stores: list = None) -> dict:
     """
-    Scrape all canonical items from both Woolworths and Coles for a
-    representative set of Brisbane stores.
+    Scrape all canonical grocery items (excluding Fuel) from Woolworths & Coles
+    for a representative set of Brisbane stores.
 
     Parameters
     ----------
     db               : pymongo database handle
     progress_callback: optional callable(current, total, message)
-    stores           : list of store dicts [{retailer, store_id, suburb}]
-                       – defaults to WOOLWORTHS_SAMPLE_STORES + COLES_BRISBANE_STORES
+    stores           : list of {retailer, store_id, suburb}
+                       defaults to WOOLWORTHS_SAMPLE_STORES + COLES_BRISBANE_STORES[:5]
 
     Returns
     -------
-    dict with keys: inserted, skipped, errors, items_scraped
+    dict: inserted, skipped, errors, error_messages, items_scraped
     """
-    items = list(db["items"].find({}, {"_id": 0}))
-    # Skip fuel – those require different sources (FuelWatch / GasBuddy)
-    grocery_items = [i for i in items if i.get("category") != "Fuel"]
+    items = list(db["items"].find({"category": {"$ne": "Fuel"}}, {"_id": 0}))
 
     if stores is None:
-        woolies_stores = [{"retailer": "woolworths", "store_id": sid, "suburb": sub}
-                          for sid, sub in WOOLWORTHS_SAMPLE_STORES]
-        coles_stores = [{"retailer": "coles", "store_id": sid, "suburb": sub}
-                        for sid, sub in COLES_BRISBANE_STORES]
-        stores = woolies_stores + coles_stores
+        stores = (
+            [{"retailer": "woolworths", "store_id": sid, "suburb": sub}
+             for sid, sub in WOOLWORTHS_SAMPLE_STORES]
+            + [{"retailer": "coles", "store_id": sid, "suburb": sub}
+               for sid, sub in COLES_BRISBANE_STORES[:5]]
+        )
 
-    total = len(grocery_items) * len(stores)
-    results = {"inserted": 0, "skipped": 0, "errors": 0, "items_scraped": []}
+    total = len(items) * len(stores)
+    results = {"inserted": 0, "skipped": 0, "errors": 0,
+               "error_messages": [], "items_scraped": []}
     step = 0
 
-    for item in grocery_items:
+    for item in items:
         for store_info in stores:
             step += 1
-            retailer = store_info["retailer"]
-            store_id = store_info["store_id"]
-            suburb = store_info["suburb"]
-            msg = f"Scraping {retailer.title()} {suburb} → {item['name']}"
+            retailer  = store_info["retailer"]
+            store_id  = store_info["store_id"]
+            suburb    = store_info["suburb"]
 
             if progress_callback:
-                progress_callback(step, total, msg)
+                progress_callback(
+                    step, total,
+                    f"[{retailer.title()}] {suburb} → {item['name']}"
+                )
 
-            # --- scrape ---
             try:
                 if retailer == "woolworths":
-                    doc = scrape_woolworths(item, store_id, suburb)
+                    result = scrape_woolworths(item, store_id)
+                    store_label = "Woolworths"
                 elif retailer == "coles":
-                    doc = scrape_coles(item, store_id, suburb)
+                    result = scrape_coles(item, store_id)
+                    store_label = "Coles"
                 else:
-                    doc = None
-            except Exception as e:
-                logger.error(f"Scrape error [{retailer}/{store_id}/{item['name']}]: {e}")
+                    results["skipped"] += 1
+                    continue
+
+            except ScrapeError as exc:
+                msg = f"[{retailer.title()} {suburb}] {item['name']}: {exc}"
+                logger.error(msg)
                 results["errors"] += 1
+                results["error_messages"].append(msg)
+                # If we get a 403 on the first item, abort early – all will fail
+                if "403" in str(exc) and step <= len(stores):
+                    results["error_messages"].append(
+                        "⚠️  Got 403 Forbidden early in the run. "
+                        "The retailer is blocking requests from this server's IP. "
+                        "This commonly happens on shared hosting (Streamlit Cloud). "
+                        "See the README for workaround options."
+                    )
+                    return results
                 continue
 
-            if doc is None:
+            except Exception as exc:
+                msg = f"[{retailer.title()} {suburb}] {item['name']}: unexpected error: {exc}"
+                logger.exception(msg)
+                results["errors"] += 1
+                results["error_messages"].append(msg)
+                continue
+
+            # No matching product found
+            if result is None:
                 results["skipped"] += 1
                 continue
 
-            # --- deduplicate: skip if same store/item scraped in last 6 hours ---
-            from datetime import timedelta
-            six_hours_ago = datetime.now(timezone.utc) - timedelta(hours=6)
-            existing = db["prices"].find_one({
-                "item_name": doc["item_name"],
-                "store": doc["store"],
-                "suburb": doc["suburb"],
-                "source": "auto_scrape",
-                "submitted_at": {"$gte": six_hours_ago},
-            })
-            if existing:
+            price, unit, product_name = result
+            doc = _make_doc(item, price, unit, product_name, store_label, suburb, store_id)
+
+            if _is_duplicate(db, doc):
                 results["skipped"] += 1
             else:
                 db["prices"].insert_one(doc)
                 results["inserted"] += 1
-                results["items_scraped"].append(f"{doc['store']} {doc['suburb']}: {doc['item_name']} ${doc['price']:.2f}")
+                results["items_scraped"].append(
+                    f"{store_label} {suburb}: {item['name']} ${price:.2f}"
+                )
 
-            time.sleep(0.8 + random.uniform(0, 0.4))  # ~1 s between requests
+            time.sleep(0.8 + random.uniform(0, 0.4))
 
     return results

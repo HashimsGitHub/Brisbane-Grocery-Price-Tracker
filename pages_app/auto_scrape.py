@@ -1,14 +1,5 @@
 """
 pages_app/auto_scrape.py  –  Auto-Scrape Prices page
-─────────────────────────────────────────────────────
-Lets an admin (or any user) trigger a background scrape of Woolworths &
-Coles Brisbane prices for all canonical items in the database.
-
-Features
-  • Select which retailers / suburbs to include
-  • Live progress bar + log during scraping
-  • Summary table of results once complete
-  • Toggle to show/hide auto-scraped prices on other pages
 """
 
 import streamlit as st
@@ -26,110 +17,97 @@ def show(db):
     st.title("🤖 Auto-Scrape Prices")
     st.caption(
         "Automatically fetch current prices from **Woolworths** and **Coles** "
-        "for all tracked items across Brisbane stores. "
-        "Results are saved to the database just like community submissions."
+        "for all tracked items across Brisbane stores."
     )
 
-    # ── Info banner ────────────────────────────────────────────────────────────
-    with st.expander("ℹ️  How it works", expanded=False):
+    with st.expander("ℹ️  How it works & hosting requirements", expanded=False):
         st.markdown(
             """
-- Prices are fetched from the **Woolworths** and **Coles** online catalogues via their search APIs.
-- Only items already in the database are scraped (same canonical item list used across the app).
-- **Fuel prices** are excluded (they change hourly and require a dedicated source like FuelWatch).
-- A scrape run is **deduplicated**: if the same store + item was scraped within the last 6 hours, it is skipped.
-- All auto-scraped records are tagged `source = auto_scrape` so they can be filtered separately.
-- Please don't run more than once every few hours to avoid hammering the retailers' servers.
+**What it does**
+- Fetches prices from the Woolworths and Coles online search APIs.
+- Only scrapes items already in the database — no new items are added.
+- **Fuel** is excluded (petrol prices need a dedicated source like FuelWatch).
+- Deduplicated: same store + item scraped within 6 hours is skipped.
+- All records are tagged `source: auto_scrape`.
+
+**⚠️  Hosting requirement — read if you see 403 errors**
+
+Woolworths and Coles **block requests from shared cloud IPs** (e.g. Streamlit Community Cloud).
+
+Options:
+1. **Run locally** — `streamlit run app.py` on your own machine works fine.
+2. **Residential proxy** — add to `.streamlit/secrets.toml`:
+   ```toml
+   SCRAPER_PROXY = "http://user:pass@host:port"
+   ```
+3. **VPS** (DigitalOcean, Hetzner, etc.) with a residential/fresh IP.
             """
         )
 
     st.divider()
 
-    # ── Store selection ────────────────────────────────────────────────────────
+    # Store selection
     st.subheader("🏪 Select Stores to Scrape")
-
     col1, col2 = st.columns(2)
 
     with col1:
-        st.markdown("**Woolworths Brisbane stores**")
-        woolies_options = {f"Woolworths – {suburb}": (sid, suburb) for sid, suburb in WOOLWORTHS_SAMPLE_STORES}
-        woolies_selected = st.multiselect(
-            "Woolworths stores",
-            options=list(woolies_options.keys()),
-            default=list(woolies_options.keys()),
+        st.markdown("**Woolworths Brisbane**")
+        woolies_opts = {f"Woolworths – {s}": (sid, s) for sid, s in WOOLWORTHS_SAMPLE_STORES}
+        woolies_sel = st.multiselect(
+            "wsel", list(woolies_opts.keys()), default=list(woolies_opts.keys()),
             label_visibility="collapsed",
         )
 
     with col2:
-        st.markdown("**Coles Brisbane stores**")
-        coles_options = {f"Coles – {suburb}": (sid, suburb) for sid, suburb in COLES_BRISBANE_STORES}
-        coles_selected = st.multiselect(
-            "Coles stores",
-            options=list(coles_options.keys()),
-            default=list(coles_options.keys())[:5],   # default to first 5 so it's not overwhelming
+        st.markdown("**Coles Brisbane**")
+        coles_opts = {f"Coles – {s}": (sid, s) for sid, s in COLES_BRISBANE_STORES}
+        coles_sel = st.multiselect(
+            "csel", list(coles_opts.keys()), default=list(coles_opts.keys())[:5],
             label_visibility="collapsed",
         )
 
-    selected_stores = []
-    for label in woolies_selected:
-        sid, suburb = woolies_options[label]
-        selected_stores.append({"retailer": "woolworths", "store_id": sid, "suburb": suburb})
-    for label in coles_selected:
-        sid, suburb = coles_options[label]
-        selected_stores.append({"retailer": "coles", "store_id": sid, "suburb": suburb})
+    selected_stores = (
+        [{"retailer": "woolworths", "store_id": sid, "suburb": sub}
+         for k in woolies_sel for sid, sub in [woolies_opts[k]]]
+        + [{"retailer": "coles", "store_id": sid, "suburb": sub}
+           for k in coles_sel for sid, sub in [coles_opts[k]]]
+    )
 
-    # Item count preview
     items = list(db["items"].find({"category": {"$ne": "Fuel"}}, {"name": 1, "_id": 0}))
     n_items = len(items)
-    n_combinations = n_items * len(selected_stores)
-    est_minutes = round(n_combinations * 1.0 / 60, 1)
+    n_req = n_items * len(selected_stores)
+    est_min = round(n_req * 1.0 / 60, 1)
+    st.info(f"**{n_items}** items × **{len(selected_stores)}** stores = **{n_req}** requests (~{est_min} min)")
 
-    st.info(
-        f"**{n_items}** items × **{len(selected_stores)}** stores = "
-        f"**{n_combinations}** requests  (~{est_minutes} min at ~1 req/s)"
-    )
-
-    # ── Last scrape status ─────────────────────────────────────────────────────
-    last_scrape = db["prices"].find_one(
-        {"source": "auto_scrape"},
-        sort=[("submitted_at", -1)],
-    )
-    if last_scrape:
-        ts = last_scrape["submitted_at"]
+    # Last scrape status
+    last = db["prices"].find_one({"source": "auto_scrape"}, sort=[("submitted_at", -1)])
+    if last:
+        ts = last["submitted_at"]
         if ts.tzinfo is None:
             ts = ts.replace(tzinfo=timezone.utc)
         age = datetime.now(timezone.utc) - ts
-        age_str = _format_age(age)
-        st.success(f"✅ Last scrape: **{age_str} ago** ({ts.strftime('%d %b %Y %H:%M')} UTC)")
+        st.success(f"✅ Last scrape: **{_fmt_age(age)} ago** ({ts.strftime('%d %b %Y %H:%M')} UTC)")
     else:
         st.warning("No auto-scraped data in the database yet.")
 
     st.divider()
 
-    # ── Trigger button ─────────────────────────────────────────────────────────
     if not selected_stores:
-        st.error("Please select at least one store.")
+        st.error("Select at least one store.")
         return
 
-    run_btn = st.button(
-        f"🚀 Start Scraping ({n_combinations} requests)",
-        type="primary",
-        use_container_width=True,
-        disabled=(n_combinations == 0),
-    )
+    if st.button(f"🚀 Start Scraping ({n_req} requests)", type="primary", use_container_width=True):
+        _run_with_ui(db, selected_stores)
 
-    if run_btn:
-        _run_scrape_with_ui(db, selected_stores)
-
-    # ── Recent auto-scraped prices table ───────────────────────────────────────
+    # Recent results table
     st.divider()
-    st.subheader("📋 Recent Auto-Scraped Prices")
-
-    since = datetime.now(timezone.utc) - timedelta(hours=24)
+    st.subheader("📋 Recent Auto-Scraped Prices (last 24 h)")
+    since = datetime.utcnow() - timedelta(hours=24)
     recent = list(
         db["prices"].find(
             {"source": "auto_scrape", "submitted_at": {"$gte": since}},
-            {"_id": 0, "item_name": 1, "price": 1, "unit": 1, "store": 1, "suburb": 1, "submitted_at": 1},
+            {"_id": 0, "item_name": 1, "price": 1, "unit": 1,
+             "store": 1, "suburb": 1, "submitted_at": 1},
         ).sort("submitted_at", -1).limit(200)
     )
 
@@ -142,67 +120,73 @@ def show(db):
         })
         df["Price ($)"] = df["Price ($)"].map("${:.2f}".format)
         st.dataframe(df, use_container_width=True, hide_index=True)
-        st.caption(f"Showing last 200 auto-scraped records (past 24 h). Total: {len(recent)}")
     else:
         st.info("No auto-scraped prices in the last 24 hours.")
 
-    # ── Manage / clear auto-scraped data ──────────────────────────────────────
     with st.expander("🗑️  Manage auto-scraped data"):
         total_auto = db["prices"].count_documents({"source": "auto_scrape"})
-        st.write(f"Total auto-scraped records in database: **{total_auto}**")
-        if st.button("Delete all auto-scraped records", type="secondary"):
+        st.write(f"Total auto-scraped records: **{total_auto}**")
+        if st.button("Delete ALL auto-scraped records", type="secondary"):
             db["prices"].delete_many({"source": "auto_scrape"})
-            st.success("All auto-scraped records deleted.")
+            st.success("Deleted.")
             st.rerun()
 
 
-# ── Private helpers ────────────────────────────────────────────────────────────
-
-def _run_scrape_with_ui(db, selected_stores):
-    """Run the scraper with a live Streamlit progress UI."""
-    progress_bar = st.progress(0, text="Starting scrape…")
+def _run_with_ui(db, selected_stores):
+    progress_bar = st.progress(0, text="Starting…")
     log_area = st.empty()
     log_lines = []
 
-    def progress_callback(current, total, message):
+    def cb(current, total, msg):
         pct = int(current / total * 100)
-        progress_bar.progress(pct, text=f"{message} ({current}/{total})")
-        log_lines.append(f"`{message}`")
-        if len(log_lines) > 12:
-            log_lines.pop(0)
-        log_area.markdown("\n\n".join(log_lines[-8:]))
+        progress_bar.progress(pct, text=f"{msg} ({current}/{total})")
+        log_lines.append(msg)
+        log_area.markdown("\n\n".join(f"`{l}`" for l in log_lines[-10:]))
 
     with st.spinner("Scraping in progress…"):
         try:
-            results = run_scrape(db, progress_callback=progress_callback, stores=selected_stores)
+            results = run_scrape(db, progress_callback=cb, stores=selected_stores)
         except Exception as e:
-            st.error(f"Scrape failed: {e}")
+            st.error(f"Fatal error: {e}")
             return
 
     progress_bar.progress(100, text="Done!")
     log_area.empty()
 
-    # Results summary
-    st.balloons()
-    st.success(
-        f"✅ Scrape complete!  "
-        f"**{results['inserted']}** new prices saved, "
-        f"**{results['skipped']}** skipped (duplicate / no match), "
-        f"**{results['errors']}** errors."
-    )
+    if results["errors"] > 0 and results["inserted"] == 0:
+        st.error(
+            f"**Scrape failed** — {results['errors']} errors, 0 prices saved. "
+            f"See details below."
+        )
+    elif results["inserted"] > 0:
+        st.success(
+            f"✅ Done!  **{results['inserted']}** new prices saved, "
+            f"**{results['skipped']}** skipped, **{results['errors']}** errors."
+        )
+        st.balloons()
+    else:
+        st.warning(
+            f"Finished but **0 prices saved**. "
+            f"Skipped: {results['skipped']}, Errors: {results['errors']}. Check errors below."
+        )
+
+    if results.get("error_messages"):
+        with st.expander(f"⚠️  {len(results['error_messages'])} error(s)", expanded=True):
+            for msg in results["error_messages"]:
+                if msg.startswith("⚠️"):
+                    st.warning(msg)
+                else:
+                    st.code(msg, language=None)
 
     if results["items_scraped"]:
-        with st.expander(f"View {len(results['items_scraped'])} new records"):
+        with st.expander(f"✅ {len(results['items_scraped'])} new records"):
             for line in results["items_scraped"]:
                 st.write(f"• {line}")
 
 
-def _format_age(delta: timedelta) -> str:
-    total_seconds = int(delta.total_seconds())
-    if total_seconds < 60:
-        return f"{total_seconds}s"
-    if total_seconds < 3600:
-        return f"{total_seconds // 60}m"
-    if total_seconds < 86400:
-        return f"{total_seconds // 3600}h {(total_seconds % 3600) // 60}m"
-    return f"{total_seconds // 86400}d"
+def _fmt_age(delta: timedelta) -> str:
+    s = int(delta.total_seconds())
+    if s < 60:    return f"{s}s"
+    if s < 3600:  return f"{s // 60}m"
+    if s < 86400: return f"{s // 3600}h {(s % 3600) // 60}m"
+    return f"{s // 86400}d"
