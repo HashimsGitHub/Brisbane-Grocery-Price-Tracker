@@ -23,6 +23,13 @@ No manual entry. No crowdsourcing. No user input required — just run a scrape 
 
 ---
 
+## 🗂️ Demo
+
+
+https://github.com/user-attachments/assets/ba845aa4-c1e2-4c52-a254-d58294497858
+
+
+---
 ## 🗂️ Pages & Features
 
 ### 🏠 Dashboard
