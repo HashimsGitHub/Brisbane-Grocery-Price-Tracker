@@ -264,15 +264,7 @@ pages = {
 
 selection = st.sidebar.radio("Navigate", list(pages.keys()), label_visibility="collapsed")
 
-st.sidebar.markdown("---")
-st.sidebar.markdown(
-    "Data contributed by the community.<br>"
-    "Prices are retained for 5 years.<br><br>"
-    f'<span style="color:#00C853;font-weight:600">■ Woolworths</span> &nbsp; '
-    f'<span style="color:#FF1744;font-weight:600">■ Coles</span> &nbsp; '
-    f'<span style="color:#00EEFF">■ Other</span>',
-    unsafe_allow_html=True,
-)
+
 
 # ── Render selected page ──────────────────────────────────────────────────────
 db = get_db()
