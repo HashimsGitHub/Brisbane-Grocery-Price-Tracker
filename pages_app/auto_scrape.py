@@ -92,7 +92,7 @@ def show(db):
             {"source": "auto_scrape", "submitted_at": {"$gte": since}},
             {"_id": 0, "item_name": 1, "price": 1, "unit": 1,
              "store": 1, "suburb": 1, "submitted_at": 1},
-        ).sort("submitted_at", -1).limit(200)
+        ).sort("submitted_at", -1)
     )
 
     if recent:
@@ -104,7 +104,7 @@ def show(db):
         })
         df["Price ($)"] = df["Price ($)"].map("${:.2f}".format)
         st.dataframe(df, width="stretch", hide_index=True)
-        st.caption(f"{len(recent)} records shown (max 200).")
+        st.caption(f"{len(recent):,} records")
     else:
         st.info("No auto-scraped prices in the last 24 hours.")
 
