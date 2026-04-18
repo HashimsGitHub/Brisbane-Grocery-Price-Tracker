@@ -11,7 +11,7 @@ def show(db):
     all_suburbs = sorted(prices.distinct("suburb"))
 
     if len(all_suburbs) < 2:
-        st.info("Need data from at least 2 suburbs to compare. Submit more prices!")
+        st.info("Need scraped data from at least 2 suburbs — run Auto-Scrape to populate.")
         return
 
     col1, col2 = st.columns(2)

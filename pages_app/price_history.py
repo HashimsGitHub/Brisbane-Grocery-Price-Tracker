@@ -13,7 +13,7 @@ def show(db):
     all_items = sorted(prices.distinct("item_name"))
 
     if not all_items:
-        st.info("No price data yet. Submit some prices to see history!")
+        st.info("No price data yet — run Auto-Scrape to populate.")
         return
 
     # ── Filters ──────────────────────────────────────────────────────────────
@@ -139,7 +139,7 @@ def show(db):
             display_df.rename(columns={
                 "item_name": "Item", "price": "Price", "unit": "Unit",
                 "store": "Store", "suburb": "Suburb", "state": "State",
-                "submitted_at": "Submitted",
+                "submitted_at": "Scraped At",
             }),
             width="stretch", hide_index=True,
         )

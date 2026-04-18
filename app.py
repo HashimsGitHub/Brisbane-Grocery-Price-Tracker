@@ -1,8 +1,8 @@
 import streamlit as st
 
 st.set_page_config(
-    page_title="Aussie Price Tracker",
-    page_icon="🛒",
+    page_title="Brisbane Grocery Price Tracker",
+    page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -250,8 +250,8 @@ from db import get_db
 from pages_app import dashboard, price_history, suburb_compare, store_rankings, auto_scrape
 
 # ── Sidebar navigation ────────────────────────────────────────────────────────
-st.sidebar.title("🛒 Aussie Price Tracker")
-st.sidebar.caption("Crowdsourced grocery & fuel prices")
+st.sidebar.title("📊 Brisbane Price Tracker")
+st.sidebar.caption("Live grocery prices scraped from Woolworths & Coles")
 
 pages = {
     "🏠 Dashboard":        dashboard.show,

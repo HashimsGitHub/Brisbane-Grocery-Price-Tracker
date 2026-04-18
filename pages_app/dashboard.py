@@ -13,7 +13,7 @@ BG     = "rgba(0,0,0,0)"
 
 def show(db):
     st.title("🏠 Dashboard")
-    st.caption("Live price data scraped from Woolworths & Coles across Brisbane")
+    st.caption("Automatically scraped from Woolworths & Coles stores across Brisbane")
 
     prices = db["prices"]
 

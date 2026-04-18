@@ -64,7 +64,7 @@ def show(db):
 
     docs = list(prices.aggregate(pipeline))
     if not docs:
-        st.info("No data yet. Submit some prices!")
+        st.info("No data yet — run Auto-Scrape to populate.")
         return
 
     df = pd.DataFrame([{
