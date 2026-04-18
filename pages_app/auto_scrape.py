@@ -47,9 +47,10 @@ def show(db):
 
     items = list(db["items"].find({"category": {"$ne": "Fuel"}}, {"name": 1, "_id": 0}))
     n_items = len(items)
-    n_req   = n_items * len(selected_stores)
-    est_min = round(n_req * 1.0 / 60, 1)
-    st.info(f"**{n_items}** items × **{len(selected_stores)}** stores = **{n_req}** requests (~{est_min} min)")
+    n_req    = n_items * len(selected_stores)
+    # 8 parallel workers (4 Woolworths + 4 Coles), ~0.5s avg per request
+    est_min  = round(n_req * 0.5 / 8 / 60, 1)
+    st.info(f"**{n_items}** items × **{len(selected_stores)}** stores = **{n_req}** requests (~{est_min} min with parallel scraping)")
 
     # ── Last scrape status ─────────────────────────────────────────────────────
     last = db["prices"].find_one({"source": "auto_scrape"}, sort=[("submitted_at", -1)])
