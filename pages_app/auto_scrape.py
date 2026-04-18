@@ -140,54 +140,29 @@ def _get_proxy() -> str | None:
 
 def _run_with_ui(db, selected_stores):
     progress_bar = st.progress(0, text="Starting…")
-    log_area     = st.empty()
-    log_lines    = []
 
     def cb(current, total, msg):
         pct = int(current / total * 100)
-        progress_bar.progress(pct, text=f"{msg} ({current}/{total})")
-        log_lines.append(msg)
-        log_area.markdown("\n\n".join(f"`{l}`" for l in log_lines[-10:]))
+        progress_bar.progress(pct, text=f"Scraping prices… {pct}%")
 
     with st.spinner("Scraping in progress…"):
         try:
             results = run_scrape(db, progress_callback=cb, stores=selected_stores)
-        except Exception as e:
-            st.error(f"Fatal error: {e}")
+        except Exception:
+            st.error("Something went wrong. Please try again later.")
             return
 
     progress_bar.progress(100, text="Done!")
-    log_area.empty()
 
     if results["inserted"] > 0:
         st.success(
-            f"✅ Done!  **{results['inserted']}** new prices saved, "
-            f"**{results['skipped']}** skipped, **{results['errors']}** errors."
+            f"✅ Done! **{results['inserted']}** new prices saved."
         )
         st.balloons()
-    elif results["errors"] > 0:
-        st.error(
-            f"**Scrape failed** — {results['errors']} errors, 0 prices saved. "
-            "See details below."
-        )
+    elif results["errors"] > 0 and results["inserted"] == 0:
+        st.error("Scrape did not complete successfully. Please try again later.")
     else:
-        st.warning(
-            f"Finished but 0 prices saved. "
-            f"Skipped: {results['skipped']}, Errors: {results['errors']}."
-        )
-
-    if results.get("error_messages"):
-        with st.expander(f"⚠️  {len(results['error_messages'])} error(s)", expanded=True):
-            for msg in results["error_messages"]:
-                if msg.startswith("⛔") or msg.startswith("⚠️"):
-                    st.warning(msg)
-                else:
-                    st.code(msg, language=None)
-
-    if results["items_scraped"]:
-        with st.expander(f"✅ {len(results['items_scraped'])} new records"):
-            for line in results["items_scraped"]:
-                st.write(f"• {line}")
+        st.warning("Scrape finished, but no new prices were found. They may already be up to date.")
 
 
 def _fmt_age(delta: timedelta) -> str:
