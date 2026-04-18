@@ -290,61 +290,76 @@ db = get_db()
 pages[selection](db)
 
 # ── Brand-colour text walker ──────────────────────────────────────────────────
-# Injected directly into the page DOM via st.markdown (NOT st.components.v1.html
-# which uses a sandboxed iframe and cannot access the parent document).
-st.markdown("""
+# st.markdown strips <script> tags even with unsafe_allow_html=True.
+# st.components.v1.html() runs JS inside an iframe — window.parent.document
+# IS accessible on Streamlit Cloud (same origin), so this works correctly.
+import streamlit.components.v1 as components
+components.html("""
 <script>
 (function () {
-  const WW    = '#00C853';   // Woolworths green
-  const COLES = '#FF1744';   // Coles red
+  const WW    = '#00C853';
+  const COLES = '#FF1744';
   const RE    = /(Woolworths|Coles)/g;
 
   function colorize(node) {
     if (!node) return;
-
-    if (node.nodeType === 3) {              // TEXT_NODE
-      const txt = node.nodeValue;
-      if (!txt || !RE.test(txt)) { RE.lastIndex = 0; return; }
+    if (node.nodeType === 3) {
+      var txt = node.nodeValue;
+      if (!txt) return;
       RE.lastIndex = 0;
-
-      const frag = document.createDocumentFragment();
-      let last = 0, m;
+      if (!RE.test(txt)) { RE.lastIndex = 0; return; }
+      RE.lastIndex = 0;
+      var frag = document.createDocumentFragment();
+      var last = 0, m;
       while ((m = RE.exec(txt)) !== null) {
         if (m.index > last)
           frag.appendChild(document.createTextNode(txt.slice(last, m.index)));
-        const s = document.createElement('span');
-        s.textContent  = m[1];
-        s.style.cssText = 'color:' + (m[1] === 'Woolworths' ? WW : COLES) +
-                          ';font-weight:700;';
-        s.dataset.branded = '1';
+        var s = document.createElement('span');
+        s.textContent = m[1];
+        s.setAttribute('style', 'color:' + (m[1]==='Woolworths' ? WW : COLES) + ' !important;font-weight:700;');
+        s.setAttribute('data-branded', '1');
         frag.appendChild(s);
         last = RE.lastIndex;
       }
       RE.lastIndex = 0;
       if (last < txt.length)
         frag.appendChild(document.createTextNode(txt.slice(last)));
-      node.parentNode.replaceChild(frag, node);
+      if (node.parentNode) node.parentNode.replaceChild(frag, node);
 
-    } else if (node.nodeType === 1) {       // ELEMENT_NODE
-      const t = node.tagName;
-      if (t==='SCRIPT'||t==='STYLE'||t==='TEXTAREA'||t==='INPUT') return;
-      if (node.dataset && node.dataset.branded) return;
-      Array.from(node.childNodes).forEach(colorize);
+    } else if (node.nodeType === 1) {
+      var tag = node.tagName;
+      if (tag==='SCRIPT'||tag==='STYLE'||tag==='TEXTAREA'||tag==='INPUT') return;
+      if (node.getAttribute('data-branded')) return;
+      // Must copy to array — childNodes is live and mutates during iteration
+      var children = Array.prototype.slice.call(node.childNodes);
+      children.forEach(colorize);
     }
   }
 
-  function run() { colorize(document.body); }
+  function run() {
+    try {
+      var doc = window.parent.document;
+      colorize(doc.body);
+    } catch(e) {
+      // Same-origin access failed — no-op
+    }
+  }
 
-  // Run after Streamlit finishes rendering
-  setTimeout(run, 600);
-  setTimeout(run, 1500);   // second pass catches lazy-rendered widgets
+  // Multiple passes: Streamlit renders asynchronously
+  setTimeout(run, 500);
+  setTimeout(run, 1200);
+  setTimeout(run, 2500);
 
-  // Re-run on every DOM mutation (page navigation, data reloads)
-  new MutationObserver(function (muts) {
-    muts.forEach(function (m) {
-      m.addedNodes.forEach(colorize);
-    });
-  }).observe(document.body, { childList: true, subtree: true });
+  // MutationObserver on parent DOM for re-renders / page navigation
+  try {
+    var parentDoc = window.parent.document;
+    var target = parentDoc.body;
+    new MutationObserver(function(muts) {
+      muts.forEach(function(m) {
+        m.addedNodes.forEach(colorize);
+      });
+    }).observe(target, { childList: true, subtree: true });
+  } catch(e) {}
 })();
 </script>
-""", unsafe_allow_html=True)
+""", height=0, scrolling=False)
