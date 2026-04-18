@@ -357,13 +357,77 @@ def _is_duplicate(db, doc: dict) -> bool:
 
 # ── Orchestrator ──────────────────────────────────────────────────────────────
 
+# Workers per retailer.
+# Woolworths and Coles are hit on separate thread pools so we never send
+# concurrent requests to the same retailer faster than it can handle.
+# 4 workers each means ~4 simultaneous requests per retailer — fast but
+# still polite. Raise to 6 if you want more speed (may increase 429s).
+_WW_WORKERS    = 4
+_COLES_WORKERS = 4
+
+
+def _scrape_task(task: dict) -> dict:
+    """
+    Execute a single (item, store) scrape task.
+    Returns a result dict — never raises.
+    """
+    item     = task["item"]
+    retailer = task["retailer"]
+    store_id = task["store_id"]
+    suburb   = task["suburb"]
+
+    out = {
+        "retailer": retailer,
+        "suburb":   suburb,
+        "item":     item["name"],
+        "doc":      None,
+        "skipped":  False,
+        "error":    None,
+    }
+
+    try:
+        if retailer == "woolworths":
+            result      = scrape_woolworths(item, store_id)
+            store_label = "Woolworths"
+        else:
+            result      = scrape_coles(item, store_id)
+            store_label = "Coles"
+
+    except ScrapeError as exc:
+        out["error"] = f"[{retailer.title()} {suburb}] {item['name']}: {exc}"
+        return out
+    except Exception as exc:
+        out["error"] = f"[{retailer.title()} {suburb}] {item['name']}: unexpected: {exc}"
+        return out
+
+    if result is None:
+        out["skipped"] = True
+        return out
+
+    price, unit, product_name = result
+    if not _price_is_sane(price):
+        logger.warning(f"Rejected insane price ${price} for {item['name']} from {product_name}")
+        out["skipped"] = True
+        return out
+
+    out["doc"] = _make_doc(item, price, unit, product_name, store_label, suburb, store_id)
+    return out
+
+
 def run_scrape(db, progress_callback=None, stores: list = None) -> dict:
     """
     Scrape all canonical grocery items (Fuel excluded) from Woolworths & Coles
-    across Brisbane stores.
+    across Brisbane stores using parallel ThreadPoolExecutors.
+
+    Woolworths and Coles requests run on separate thread pools so neither
+    retailer receives more than _WW_WORKERS / _COLES_WORKERS concurrent
+    requests at a time.
 
     Returns dict: inserted, skipped, errors, error_messages, items_scraped
     """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    import threading
+
     items = list(db["items"].find({"category": {"$ne": "Fuel"}}, {"_id": 0}))
 
     if stores is None:
@@ -374,78 +438,108 @@ def run_scrape(db, progress_callback=None, stores: list = None) -> dict:
                for sid, sub in COLES_BRISBANE_STORES[:5]]
         )
 
-    total   = len(items) * len(stores)
-    results = {"inserted": 0, "skipped": 0, "errors": 0,
-               "error_messages": [], "items_scraped": []}
-    step = 0
+    # Build flat task list
+    tasks = [
+        {**store_info, "item": item}
+        for item in items
+        for store_info in stores
+    ]
+    total = len(tasks)
 
-    for item in items:
-        for store_info in stores:
-            step += 1
-            retailer  = store_info["retailer"]
-            store_id  = store_info["store_id"]
-            suburb    = store_info["suburb"]
+    results = {
+        "inserted": 0, "skipped": 0, "errors": 0,
+        "error_messages": [], "items_scraped": [],
+    }
+
+    # Thread-safe counters
+    lock    = threading.Lock()
+    counter = {"n": 0}
+
+    # Pre-fetch dedup set to avoid per-insert MongoDB round-trips in threads
+    from datetime import timezone
+    six_hours_ago = datetime.utcnow() - timedelta(hours=6)
+    existing = set(
+        (d["item_name"], d["store"], d["suburb"])
+        for d in db["prices"].find(
+            {"source": "auto_scrape", "submitted_at": {"$gte": six_hours_ago}},
+            {"item_name": 1, "store": 1, "suburb": 1, "_id": 0},
+        )
+    )
+
+    # Split tasks by retailer
+    ww_tasks    = [t for t in tasks if t["retailer"] == "woolworths"]
+    coles_tasks = [t for t in tasks if t["retailer"] == "coles"]
+
+    docs_to_insert = []
+
+    def process_futures(futures_map):
+        for future in as_completed(futures_map):
+            task = futures_map[future]
+            with lock:
+                counter["n"] += 1
+                step = counter["n"]
 
             if progress_callback:
-                progress_callback(step, total,
-                    f"[{retailer.title()}] {suburb} → {item['name']}")
-
-            try:
-                if retailer == "woolworths":
-                    result = scrape_woolworths(item, store_id)
-                    store_label = "Woolworths"
-                elif retailer == "coles":
-                    result = scrape_coles(item, store_id)
-                    store_label = "Coles"
-                else:
-                    results["skipped"] += 1
-                    continue
-
-            except ScrapeError as exc:
-                msg = f"[{retailer.title()} {suburb}] {item['name']}: {exc}"
-                logger.error(msg)
-                results["errors"] += 1
-                results["error_messages"].append(msg)
-                # Abort early if we hit a persistent 403 on the first store
-                if "403" in str(exc) and step <= len(stores):
-                    results["error_messages"].append(
-                        "⛔ Aborting: repeated 403s indicate bot-detection is blocking "
-                        "requests from this server. curl_cffi Chrome impersonation was "
-                        "not sufficient. Add SCRAPER_PROXY to secrets.toml or run locally."
-                    )
-                    return results
-                continue
-
-            except Exception as exc:
-                msg = f"[{retailer.title()} {suburb}] {item['name']}: unexpected: {exc}"
-                logger.exception(msg)
-                results["errors"] += 1
-                results["error_messages"].append(msg)
-                continue
-
-            if result is None:
-                results["skipped"] += 1
-                continue
-
-            price, unit, product_name = result
-
-            # Reject implausible prices
-            if not _price_is_sane(price):
-                logger.warning(f"Rejected insane price ${price} for {item['name']} from {product_name}")
-                results["skipped"] += 1
-                continue
-
-            doc = _make_doc(item, price, unit, product_name, store_label, suburb, store_id)
-
-            if _is_duplicate(db, doc):
-                results["skipped"] += 1
-            else:
-                db["prices"].insert_one(doc)
-                results["inserted"] += 1
-                results["items_scraped"].append(
-                    f"{store_label} {suburb}: {item['name']} ${price:.2f}"
+                progress_callback(
+                    step, total,
+                    f"[{task['retailer'].title()}] {task['suburb']} → {task['item']['name']}"
                 )
 
-            time.sleep(0.6 + random.uniform(0, 0.4))
+            try:
+                out = future.result()
+            except Exception as exc:
+                with lock:
+                    results["errors"] += 1
+                    results["error_messages"].append(str(exc))
+                continue
+
+            if out["error"]:
+                with lock:
+                    results["errors"] += 1
+                    results["error_messages"].append(out["error"])
+                    # Abort whole run on early 403
+                    if "403" in out["error"] and step <= len(stores):
+                        results["error_messages"].append(
+                            "⛔ Aborting: 403 Forbidden — bot detection is blocking requests. "
+                            "Add SCRAPER_PROXY to secrets.toml or run locally."
+                        )
+                continue
+
+            if out["skipped"] or out["doc"] is None:
+                with lock:
+                    results["skipped"] += 1
+                continue
+
+            doc = out["doc"]
+            key = (doc["item_name"], doc["store"], doc["suburb"])
+            with lock:
+                if key in existing:
+                    results["skipped"] += 1
+                else:
+                    existing.add(key)
+                    docs_to_insert.append(doc)
+
+    # Run both pools concurrently using threads-within-threads is fine here
+    # because we're doing I/O (network + DB), not CPU work.
+    with ThreadPoolExecutor(max_workers=_WW_WORKERS,    thread_name_prefix="ww")    as ww_pool,          ThreadPoolExecutor(max_workers=_COLES_WORKERS, thread_name_prefix="coles") as coles_pool:
+
+        ww_futures    = {ww_pool.submit(_scrape_task, t):    t for t in ww_tasks}
+        coles_futures = {coles_pool.submit(_scrape_task, t): t for t in coles_tasks}
+
+        all_futures = {**ww_futures, **coles_futures}
+        process_futures(all_futures)
+
+    # Batch-insert all collected docs in one MongoDB round-trip
+    if docs_to_insert:
+        try:
+            db["prices"].insert_many(docs_to_insert, ordered=False)
+            results["inserted"] = len(docs_to_insert)
+            results["items_scraped"] = [
+                f"{d['store']} {d['suburb']}: {d['item_name']} ${d['price']:.2f}"
+                for d in docs_to_insert
+            ]
+        except Exception as exc:
+            results["errors"] += 1
+            results["error_messages"].append(f"Batch insert error: {exc}")
 
     return results
