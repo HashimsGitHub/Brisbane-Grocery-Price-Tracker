@@ -20,29 +20,40 @@ def show(db):
 
     # ── Store selection ────────────────────────────────────────────────────────
     st.subheader("🏪 Select Stores to Scrape")
-    col1, col2 = st.columns(2)
 
-    with col1:
-        st.markdown("**Woolworths Brisbane**")
-        woolies_opts = {f"Woolworths – {s}": (sid, s) for sid, s in WOOLWORTHS_SAMPLE_STORES}
-        woolies_sel = st.multiselect(
-            "wsel", list(woolies_opts.keys()), default=list(woolies_opts.keys()),
-            label_visibility="collapsed",
-        )
+    woolies_opts = {s: (sid, s) for sid, s in WOOLWORTHS_SAMPLE_STORES}
+    coles_opts   = {s: (sid, s) for sid, s in COLES_BRISBANE_STORES}
 
-    with col2:
-        st.markdown("**Coles Brisbane**")
-        coles_opts = {f"Coles – {s}": (sid, s) for sid, s in COLES_BRISBANE_STORES}
-        coles_sel = st.multiselect(
-            "csel", list(coles_opts.keys()), default=list(coles_opts.keys())[:5],
-            label_visibility="collapsed",
-        )
+    # Woolworths — checkboxes in a clean grid
+    st.markdown(
+        '<span style="color:#00C853;font-weight:700;font-size:1em">🟢 Woolworths Brisbane</span>',
+        unsafe_allow_html=True,
+    )
+    ww_cols = st.columns(4)
+    woolies_sel = []
+    for i, suburb in enumerate(woolies_opts):
+        if ww_cols[i % 4].checkbox(suburb, value=True, key=f"ww_{suburb}"):
+            woolies_sel.append(suburb)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # Coles — checkboxes in a clean grid
+    st.markdown(
+        '<span style="color:#FF1744;font-weight:700;font-size:1em">🔴 Coles Brisbane</span>',
+        unsafe_allow_html=True,
+    )
+    coles_cols = st.columns(4)
+    coles_sel = []
+    for i, suburb in enumerate(coles_opts):
+        default = i < 5   # first 5 ticked by default
+        if coles_cols[i % 4].checkbox(suburb, value=default, key=f"coles_{suburb}"):
+            coles_sel.append(suburb)
 
     selected_stores = (
         [{"retailer": "woolworths", "store_id": sid, "suburb": sub}
-         for k in woolies_sel for sid, sub in [woolies_opts[k]]]
+         for s in woolies_sel for sid, sub in [woolies_opts[s]]]
         + [{"retailer": "coles", "store_id": sid, "suburb": sub}
-           for k in coles_sel for sid, sub in [coles_opts[k]]]
+           for s in coles_sel for sid, sub in [coles_opts[s]]]
     )
 
     items = list(db["items"].find({"category": {"$ne": "Fuel"}}, {"name": 1, "_id": 0}))
