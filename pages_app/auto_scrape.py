@@ -97,13 +97,6 @@ def show(db):
     else:
         st.info("No auto-scraped prices in the last 24 hours.")
 
-    with st.expander("🗑️  Manage auto-scraped data"):
-        total_auto = db["prices"].count_documents({"source": "auto_scrape"})
-        st.write(f"Total auto-scraped records: **{total_auto}**")
-        if st.button("Delete ALL auto-scraped records", type="secondary"):
-            db["prices"].delete_many({"source": "auto_scrape"})
-            st.success("Deleted.")
-            st.rerun()
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
