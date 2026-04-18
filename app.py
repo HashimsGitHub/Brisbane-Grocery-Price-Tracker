@@ -72,14 +72,6 @@ section[data-testid="stSidebar"] hr {
     border-color: var(--border) !important;
 }
 
-/* ── Woolworths: green wherever the word appears ── */
-[data-testid="stDataFrame"] td:has(> div:contains("Woolworths")),
-td:contains("Woolworths") { color: var(--woolworths) !important; }
-
-/* ── Coles: red wherever the word appears ── */
-[data-testid="stDataFrame"] td:has(> div:contains("Coles")),
-td:contains("Coles") { color: var(--coles) !important; }
-
 /* ── Woolworths / Coles inline markdown styling helpers ── */
 .woolworths { color: var(--woolworths) !important; font-weight: 600; }
 .coles      { color: var(--coles)      !important; font-weight: 600; }
@@ -296,3 +288,87 @@ st.sidebar.markdown(
 # ── Render selected page ──────────────────────────────────────────────────────
 db = get_db()
 pages[selection](db)
+
+# ── Brand-colour text walker ──────────────────────────────────────────────────
+# JavaScript MutationObserver that walks every text node in the page and wraps
+# occurrences of "Woolworths" in green and "Coles" in red.
+# Pure CSS :contains() is not supported in any browser, so JS is the only
+# reliable cross-browser approach.
+st.components.v1.html("""
+<script>
+(function() {
+  const WW_COLOR  = '#00C853';
+  const COLES_COLOR = '#FF1744';
+
+  // Regex: whole-word match, case-sensitive brand names
+  const PATTERN = /(Woolworths|Coles)/g;
+
+  function colorize(node) {
+    // Skip script/style/already-coloured spans
+    if (!node) return;
+    if (node.nodeType === Node.TEXT_NODE) {
+      const text = node.nodeValue;
+      if (!PATTERN.test(text)) return;
+      PATTERN.lastIndex = 0;
+
+      const frag = document.createDocumentFragment();
+      let last = 0, match;
+      while ((match = PATTERN.exec(text)) !== null) {
+        if (match.index > last) {
+          frag.appendChild(document.createTextNode(text.slice(last, match.index)));
+        }
+        const span = document.createElement('span');
+        span.textContent = match[1];
+        span.style.color      = match[1] === 'Woolworths' ? WW_COLOR : COLES_COLOR;
+        span.style.fontWeight = '700';
+        span.setAttribute('data-branded', '1');
+        frag.appendChild(span);
+        last = PATTERN.lastIndex;
+      }
+      if (last < text.length) {
+        frag.appendChild(document.createTextNode(text.slice(last)));
+      }
+      node.parentNode.replaceChild(frag, node);
+      PATTERN.lastIndex = 0;
+
+    } else if (node.nodeType === Node.ELEMENT_NODE) {
+      // Skip elements we shouldn't touch
+      const tag = node.tagName;
+      if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'TEXTAREA' || tag === 'INPUT') return;
+      if (node.getAttribute && node.getAttribute('data-branded')) return;
+      // Clone childNodes list (live list mutates during iteration)
+      Array.from(node.childNodes).forEach(colorize);
+    }
+  }
+
+  function run() {
+    // Target the Streamlit app root
+    const root = window.parent.document.getElementById('root') ||
+                 window.parent.document.body;
+    colorize(root);
+  }
+
+  // Run once after initial render
+  setTimeout(run, 800);
+
+  // Re-run whenever Streamlit re-renders (navigation, data updates)
+  const observer = new MutationObserver(function(mutations) {
+    mutations.forEach(function(m) {
+      m.addedNodes.forEach(colorize);
+    });
+  });
+
+  function attach() {
+    const root = window.parent.document.getElementById('root') ||
+                 window.parent.document.body;
+    if (root) {
+      observer.observe(root, { childList: true, subtree: true });
+      run();
+    } else {
+      setTimeout(attach, 300);
+    }
+  }
+  attach();
+})();
+</script>
+""", height=0)
