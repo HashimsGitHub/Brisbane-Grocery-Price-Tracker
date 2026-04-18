@@ -383,4 +383,4 @@ st.iframe("""
   } catch(e) {}
 })();
 </script>
-""", height=0)
+""", height=1)
