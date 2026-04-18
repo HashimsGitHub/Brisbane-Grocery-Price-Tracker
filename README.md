@@ -28,7 +28,11 @@ Prices come from **two sources**:
 
 
 
-https://github.com/user-attachments/assets/b9f22148-9e03-4d0f-a040-7565a08dd540
+
+
+https://github.com/user-attachments/assets/1cf0d3af-2470-439d-b6b1-51e2ea12d67a
+
+
 
 
 ### 🏠 Dashboard
