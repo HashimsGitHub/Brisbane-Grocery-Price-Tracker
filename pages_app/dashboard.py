@@ -22,7 +22,10 @@ def show(db):
     week_ago     = datetime.utcnow() - timedelta(days=7)
     this_week    = prices.count_documents({"submitted_at": {"$gte": week_ago}})
     unique_items = len(prices.distinct("item_name"))
-    unique_stores = len(prices.distinct("store"))
+    _store_suburb_pipeline = [
+        {"$group": {"_id": {"store": "$store", "suburb": "$suburb"}}},
+    ]
+    unique_stores = len(list(prices.aggregate(_store_suburb_pipeline)))
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Total prices tracked", f"{total:,}")
