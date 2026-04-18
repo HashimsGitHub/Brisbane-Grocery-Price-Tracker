@@ -133,21 +133,11 @@ input, textarea, select,
 }
 [data-baseweb="tag"] span { color: var(--neon-blue) !important; }
 
-/* ── Dataframe / table ── */
-[data-testid="stDataFrame"],
-[data-testid="stDataFrame"] *,
-.stDataFrame iframe {
+/* ── Dataframe outer shell (iframe border/bg) ── */
+[data-testid="stDataFrame"] {
     background-color: var(--bg2) !important;
-    color: var(--neon-blue) !important;
 }
-[data-testid="stDataFrame"] th {
-    background-color: #061010 !important;
-    color: var(--neon-blue) !important;
-    border-bottom: 1px solid var(--neon-blue-dim) !important;
-}
-[data-testid="stDataFrame"] tr:hover td {
-    background-color: rgba(0,238,255,0.05) !important;
-}
+/* Note: cell text inside the iframe is styled via JS injection below */
 
 /* ── Metrics ── */
 [data-testid="stMetric"] {
@@ -289,7 +279,7 @@ st.sidebar.markdown(
 db = get_db()
 pages[selection](db)
 
-# ── Brand-colour text walker ──────────────────────────────────────────────────
+# ── Brand-colour + dataframe theme injector ──────────────────────────────────
 # st.markdown strips <script> tags even with unsafe_allow_html=True.
 # st.components.v1.html() runs JS inside an iframe — window.parent.document
 # IS accessible on Streamlit Cloud (same origin), so this works correctly.
@@ -336,10 +326,42 @@ components.html("""
     }
   }
 
+  // Inject CSS into every st.dataframe iframe so text is visible on black bg
+  function styleDataframes() {
+    try {
+      var frames = window.parent.document.querySelectorAll(
+        '[data-testid="stDataFrame"] iframe, [data-testid="stDataFrameResizable"] iframe'
+      );
+      frames.forEach(function(iframe) {
+        try {
+          var idoc = iframe.contentDocument || iframe.contentWindow.document;
+          if (!idoc || idoc.getElementById('_df_theme')) return;
+          var style = idoc.createElement('style');
+          style.id = '_df_theme';
+          style.textContent = [
+            'body, .dvn-scroller { background:#0a0a0a !important; }',
+            '.cell-wrap-text, .ag-cell, .ag-header-cell-text,',
+            '.ag-row, .ag-cell-value, span, div { color:#00EEFF !important; }',
+            '.ag-header { background:#061010 !important; }',
+            '.ag-row-odd { background:#0d0d0d !important; }',
+            '.ag-row-even { background:#0a0a0a !important; }',
+            '.ag-row:hover { background:rgba(0,238,255,0.06) !important; }',
+            '.ag-header-cell { border-bottom:1px solid #1a2a2a !important; }',
+            '::-webkit-scrollbar { width:5px; height:5px; }',
+            '::-webkit-scrollbar-track { background:#000; }',
+            '::-webkit-scrollbar-thumb { background:#00AACC; border-radius:3px; }',
+          ].join('\n');
+          idoc.head.appendChild(style);
+        } catch(e2) {}
+      });
+    } catch(e) {}
+  }
+
   function run() {
     try {
       var doc = window.parent.document;
       colorize(doc.body);
+      styleDataframes();
     } catch(e) {
       // Same-origin access failed — no-op
     }
@@ -358,6 +380,7 @@ components.html("""
       muts.forEach(function(m) {
         m.addedNodes.forEach(colorize);
       });
+      styleDataframes();
     }).observe(target, { childList: true, subtree: true });
   } catch(e) {}
 })();
