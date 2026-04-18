@@ -280,11 +280,9 @@ db = get_db()
 pages[selection](db)
 
 # ── Brand-colour + dataframe theme injector ──────────────────────────────────
-# st.markdown strips <script> tags even with unsafe_allow_html=True.
-# st.components.v1.html() runs JS inside an iframe — window.parent.document
+# st.iframe() runs JS inside an iframe — window.parent.document
 # IS accessible on Streamlit Cloud (same origin), so this works correctly.
-import streamlit.components.v1 as components
-components.html("""
+st.iframe("""
 <script>
 (function () {
   const WW    = '#00C853';
