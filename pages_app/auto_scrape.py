@@ -103,8 +103,27 @@ def show(db):
             "store": "Store", "suburb": "Suburb", "submitted_at": "Scraped At",
         })
         df["Price ($)"] = df["Price ($)"].map("${:.2f}".format)
-        st.dataframe(df, width="stretch", hide_index=True)
-        st.caption(f"{len(recent):,} records")
+
+        search = st.text_input(
+            "🔍 Search",
+            placeholder="Filter by item, store, suburb…",
+            label_visibility="collapsed",
+        )
+
+        if search:
+            mask = df.apply(
+                lambda row: row.astype(str).str.contains(search, case=False, na=False).any(),
+                axis=1,
+            )
+            filtered = df[mask]
+        else:
+            filtered = df
+
+        st.dataframe(filtered, width="stretch", hide_index=True)
+        st.caption(
+            f"{len(filtered):,} of {len(df):,} records"
+            if search else f"{len(df):,} records"
+        )
     else:
         st.info("No auto-scraped prices in the last 24 hours.")
 
