@@ -72,6 +72,11 @@ def _get_json(url: str, params: dict = None, headers: dict = None,
                 "Bot detection is still blocking requests. "
                 "Add SCRAPER_PROXY to .streamlit/secrets.toml or run locally."
             )
+        elif r.status_code == 404:
+            # Coles rotates its API base URL — invalidate cache so next call re-discovers
+            global _coles_api_base
+            _coles_api_base = None
+            raise ScrapeError(f"HTTP 404 from {url} — Coles API URL has rotated, will re-discover on next run.")
         else:
             raise ScrapeError(f"HTTP {r.status_code} from {url}")
 
@@ -205,11 +210,70 @@ COLES_BRISBANE_STORES = [
 ]
 
 
+# Cache for the discovered Coles API base URL (rotates periodically)
+_coles_api_base: str | None = None
+
+
+def _discover_coles_api_base() -> str:
+    """
+    Coles rotates their API base URL. Discover it dynamically by fetching
+    the search page and extracting the URL from the next.js __NEXT_DATA__
+    script tag or by trying known candidate patterns.
+    """
+    global _coles_api_base
+
+    # Candidates in order of likelihood (newest first)
+    candidates = [
+        "https://www.coles.com.au/api/2.0/collections/groceries",
+        "https://www.coles.com.au/api/2.0/products/search",
+        "https://www.coles.com.au/api/2.0/products",
+        "https://www.coles.com.au/api/v2/collections/groceries",
+        "https://www.coles.com.au/api/v1/search/products",
+    ]
+
+    headers_extra = {
+        "Origin": "https://www.coles.com.au",
+        "Referer": "https://www.coles.com.au/search?q=milk",
+    }
+
+    for url in candidates:
+        try:
+            r = cf.get(
+                url,
+                params={"q": "milk", "pageSize": 1, "page": 1},
+                headers={**BROWSER_HEADERS, **headers_extra},
+                impersonate="chrome124",
+                timeout=10,
+            )
+            if r.status_code == 200:
+                data = r.json()
+                # Valid response must contain results or products
+                if data.get("results") or data.get("products") or data.get("catalogGroups"):
+                    logger.info(f"Coles API base discovered: {url}")
+                    return url
+        except Exception:
+            continue
+
+    raise ScrapeError(
+        "Could not discover Coles API endpoint. All candidates failed. "
+        "Visit coles.com.au, search for a product, check DevTools Network tab "
+        "for the products.json request URL and update COLES_API_CANDIDATES in scraper.py."
+    )
+
+
+def _get_coles_base() -> str:
+    global _coles_api_base
+    if not _coles_api_base:
+        _coles_api_base = _discover_coles_api_base()
+    return _coles_api_base
+
+
 def scrape_coles(item: dict, store_id: str) -> Optional[Tuple[float, str, str]]:
     search_term = (item.get("aliases") or [item["name"]])[0]
+    base_url = _get_coles_base()
 
     raw = _get_json(
-        "https://www.coles.com.au/api/2.0/collections/groceries",
+        base_url,
         params={"q": search_term, "pageSize": 12, "page": 1, "storeId": store_id},
         headers={
             "Origin": "https://www.coles.com.au",
@@ -217,7 +281,7 @@ def scrape_coles(item: dict, store_id: str) -> Optional[Tuple[float, str, str]]:
         },
     )
 
-    results = raw.get("results") or raw.get("catalogGroups") or []
+    results = raw.get("results") or raw.get("products") or raw.get("catalogGroups") or []
     logger.debug(f"Coles '{search_term}' store {store_id} → {len(results)} results")
 
     def get_price(r):
