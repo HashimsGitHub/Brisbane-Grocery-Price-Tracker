@@ -143,13 +143,26 @@ def show(db):
             hoverongaps=False,
             hovertemplate="Store: %{y}<br>Item: %{x}<br>Avg: $%{z:.2f}<extra></extra>",
         ))
+        # yaxis.tickfont.color only accepts a single colour in Plotly,
+        # so we hide the default tick labels and use per-row annotations instead.
+        store_labels = heat.index.tolist()
+        annotations = [
+            dict(
+                x=-0.01, xref="paper", xanchor="right",
+                y=i,     yref="y",
+                text=f'<b>{s}</b>',
+                font=dict(color=STORE_COLORS.get(s, DEFAULT_COLOR), size=12),
+                showarrow=False,
+            )
+            for i, s in enumerate(store_labels)
+        ]
         fig2.update_layout(
             plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
-            margin=dict(l=0, r=0, t=10, b=0),
+            margin=dict(l=120, r=0, t=10, b=0),
             xaxis_tickangle=-35,
             xaxis=dict(tickfont=dict(color="#00EEFF")),
-            yaxis=dict(tickfont=dict(color=[ STORE_COLORS.get(s, DEFAULT_COLOR)
-                                             for s in heat.index.tolist() ])),
+            yaxis=dict(showticklabels=False),
+            annotations=annotations,
             height=max(300, len(heat) * 40 + 100),
         )
         st.plotly_chart(fig2, width="stretch")
