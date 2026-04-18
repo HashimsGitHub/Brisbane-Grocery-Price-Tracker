@@ -16,44 +16,6 @@ def show(db):
         "for all tracked items across Brisbane stores."
     )
 
-    # ── Proxy status banner ────────────────────────────────────────────────────
-    proxy = _get_proxy()
-    if proxy:
-        st.success(f"🔀 Proxy configured — requests will route through your proxy.")
-    else:
-        st.info(
-            "💡 **No proxy configured.** The scraper uses Chrome TLS impersonation "
-            "(`curl_cffi`) to bypass bot detection. If you still see 403 errors on "
-            "Streamlit Cloud, add a proxy — see the expander below.",
-            icon="ℹ️",
-        )
-
-    with st.expander("⚙️  Setup & troubleshooting"):
-        st.markdown("""
-### How it works
-- Fetches prices from the Woolworths and Coles search APIs using a real Chrome TLS fingerprint.
-- Only scrapes items already in your database. Fuel is excluded.
-- Deduplicates: same store + item scraped within 6 hours is skipped.
-- All records tagged `source: auto_scrape`.
-
-### If you see 403 errors on Streamlit Cloud
-Woolworths / Coles may still block Streamlit Cloud IPs even with TLS impersonation.
-Add a proxy to **`.streamlit/secrets.toml`**:
-
-```toml
-SCRAPER_PROXY = "http://username:password@proxy-host:port"
-```
-
-**Free / cheap proxy options:**
-| Service | Free tier | Notes |
-|---|---|---|
-| [ScraperAPI](https://scraperapi.com) | 1,000 req/mo | Use API key as password |
-| [Zyte Smart Proxy](https://www.zyte.com/smart-proxy-manager/) | Trial available | Best AU coverage |
-| [Webshare](https://webshare.io) | 10 free proxies | Residential available |
-
-**Or just run locally** — `streamlit run app.py` on your home network always works.
-        """)
-
     st.divider()
 
     # ── Store selection ────────────────────────────────────────────────────────
