@@ -290,85 +290,61 @@ db = get_db()
 pages[selection](db)
 
 # ── Brand-colour text walker ──────────────────────────────────────────────────
-# JavaScript MutationObserver that walks every text node in the page and wraps
-# occurrences of "Woolworths" in green and "Coles" in red.
-# Pure CSS :contains() is not supported in any browser, so JS is the only
-# reliable cross-browser approach.
-st.components.v1.html("""
+# Injected directly into the page DOM via st.markdown (NOT st.components.v1.html
+# which uses a sandboxed iframe and cannot access the parent document).
+st.markdown("""
 <script>
-(function() {
-  const WW_COLOR  = '#00C853';
-  const COLES_COLOR = '#FF1744';
-
-  // Regex: whole-word match, case-sensitive brand names
-  const PATTERN = /(Woolworths|Coles)/g;
+(function () {
+  const WW    = '#00C853';   // Woolworths green
+  const COLES = '#FF1744';   // Coles red
+  const RE    = /(Woolworths|Coles)/g;
 
   function colorize(node) {
-    // Skip script/style/already-coloured spans
     if (!node) return;
-    if (node.nodeType === Node.TEXT_NODE) {
-      const text = node.nodeValue;
-      if (!PATTERN.test(text)) return;
-      PATTERN.lastIndex = 0;
+
+    if (node.nodeType === 3) {              // TEXT_NODE
+      const txt = node.nodeValue;
+      if (!txt || !RE.test(txt)) { RE.lastIndex = 0; return; }
+      RE.lastIndex = 0;
 
       const frag = document.createDocumentFragment();
-      let last = 0, match;
-      while ((match = PATTERN.exec(text)) !== null) {
-        if (match.index > last) {
-          frag.appendChild(document.createTextNode(text.slice(last, match.index)));
-        }
-        const span = document.createElement('span');
-        span.textContent = match[1];
-        span.style.color      = match[1] === 'Woolworths' ? WW_COLOR : COLES_COLOR;
-        span.style.fontWeight = '700';
-        span.setAttribute('data-branded', '1');
-        frag.appendChild(span);
-        last = PATTERN.lastIndex;
+      let last = 0, m;
+      while ((m = RE.exec(txt)) !== null) {
+        if (m.index > last)
+          frag.appendChild(document.createTextNode(txt.slice(last, m.index)));
+        const s = document.createElement('span');
+        s.textContent  = m[1];
+        s.style.cssText = 'color:' + (m[1] === 'Woolworths' ? WW : COLES) +
+                          ';font-weight:700;';
+        s.dataset.branded = '1';
+        frag.appendChild(s);
+        last = RE.lastIndex;
       }
-      if (last < text.length) {
-        frag.appendChild(document.createTextNode(text.slice(last)));
-      }
+      RE.lastIndex = 0;
+      if (last < txt.length)
+        frag.appendChild(document.createTextNode(txt.slice(last)));
       node.parentNode.replaceChild(frag, node);
-      PATTERN.lastIndex = 0;
 
-    } else if (node.nodeType === Node.ELEMENT_NODE) {
-      // Skip elements we shouldn't touch
-      const tag = node.tagName;
-      if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'TEXTAREA' || tag === 'INPUT') return;
-      if (node.getAttribute && node.getAttribute('data-branded')) return;
-      // Clone childNodes list (live list mutates during iteration)
+    } else if (node.nodeType === 1) {       // ELEMENT_NODE
+      const t = node.tagName;
+      if (t==='SCRIPT'||t==='STYLE'||t==='TEXTAREA'||t==='INPUT') return;
+      if (node.dataset && node.dataset.branded) return;
       Array.from(node.childNodes).forEach(colorize);
     }
   }
 
-  function run() {
-    // Target the Streamlit app root
-    const root = window.parent.document.getElementById('root') ||
-                 window.parent.document.body;
-    colorize(root);
-  }
+  function run() { colorize(document.body); }
 
-  // Run once after initial render
-  setTimeout(run, 800);
+  // Run after Streamlit finishes rendering
+  setTimeout(run, 600);
+  setTimeout(run, 1500);   // second pass catches lazy-rendered widgets
 
-  // Re-run whenever Streamlit re-renders (navigation, data updates)
-  const observer = new MutationObserver(function(mutations) {
-    mutations.forEach(function(m) {
+  // Re-run on every DOM mutation (page navigation, data reloads)
+  new MutationObserver(function (muts) {
+    muts.forEach(function (m) {
       m.addedNodes.forEach(colorize);
     });
-  });
-
-  function attach() {
-    const root = window.parent.document.getElementById('root') ||
-                 window.parent.document.body;
-    if (root) {
-      observer.observe(root, { childList: true, subtree: true });
-      run();
-    } else {
-      setTimeout(attach, 300);
-    }
-  }
-  attach();
+  }).observe(document.body, { childList: true, subtree: true });
 })();
 </script>
-""", height=0)
+""", unsafe_allow_html=True)
