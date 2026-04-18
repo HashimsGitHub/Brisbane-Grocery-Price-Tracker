@@ -87,7 +87,7 @@ def show(db):
         height=max(300, len(alerts_df) * 36),
     )
     fig.update_layout(
-        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", font=dict(color="#00EEFF"),
         coloraxis_showscale=False,
         yaxis={"categoryorder": "total ascending"},
         margin=dict(l=0, r=0, t=10, b=0),

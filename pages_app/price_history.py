@@ -103,6 +103,7 @@ def show(db):
         hovermode="x unified",
         plot_bgcolor="rgba(0,0,0,0)",
         paper_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#00EEFF"),
         legend=dict(orientation="h", y=-0.2),
         margin=dict(l=0, r=0, t=10, b=0),
         height=380,
@@ -123,7 +124,7 @@ def show(db):
         height=280,
     )
     fig2.update_layout(
-        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", font=dict(color="#00EEFF"),
         coloraxis_showscale=False, margin=dict(l=0, r=0, t=10, b=0),
     )
     fig2.update_yaxes(tickprefix="$")

@@ -84,7 +84,7 @@ def show(db):
         barmode="group",
         xaxis_tickangle=-35,
         yaxis_title="Avg price ($)",
-        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", font=dict(color="#00EEFF"),
         legend=dict(orientation="h", y=1.1),
         margin=dict(l=0, r=0, t=20, b=0),
         height=400,
