@@ -247,7 +247,7 @@ def coles(text: str) -> str:
 
 
 from db import get_db
-from pages_app import dashboard, submit_price, price_history, suburb_compare, price_alerts, store_rankings, auto_scrape
+from pages_app import dashboard, price_history, suburb_compare, price_alerts, store_rankings, auto_scrape
 
 # ── Sidebar navigation ────────────────────────────────────────────────────────
 st.sidebar.title("🛒 Aussie Price Tracker")
@@ -255,7 +255,6 @@ st.sidebar.caption("Crowdsourced grocery & fuel prices")
 
 pages = {
     "🏠 Dashboard":        dashboard.show,
-    "📝 Submit a Price":   submit_price.show,
     "🤖 Auto-Scrape":      auto_scrape.show,
     "📈 Price History":    price_history.show,
     "🗺️ Suburb Compare":  suburb_compare.show,
