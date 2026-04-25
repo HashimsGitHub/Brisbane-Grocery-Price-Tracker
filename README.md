@@ -137,7 +137,7 @@ Run it weekly to build a rich historical dataset — trend charts, biggest mover
 
 ## 🌐 Live App
 
-👉 **[oz-price-tracker.streamlit.app](https://oz-price-tracker.streamlit.app/)**
+👉 https://brissie-grocery-tracker.streamlit.app/ 
 
 Free to use. No account needed. Read-only dashboards — scraping is triggered manually.
 
