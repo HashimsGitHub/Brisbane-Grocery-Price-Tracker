@@ -5,12 +5,6 @@
 ### *Live prices. Zero effort. Real savings.*
 
 **Automatically scrapes and visualises grocery prices across Brisbane — Woolworths & Coles.**
-
-[![Live App](https://img.shields.io/badge/🚀%20Live%20App-oz--price--tracker.streamlit.app-00EEFF?style=for-the-badge&labelColor=000000)](https://oz-price-tracker.streamlit.app/)
-[![Made with Streamlit](https://img.shields.io/badge/Made%20with-Streamlit-FF4B4B?style=for-the-badge&logo=streamlit&logoColor=white)](https://streamlit.io)
-[![MongoDB](https://img.shields.io/badge/Database-MongoDB-00C853?style=for-the-badge&logo=mongodb&logoColor=white)](https://mongodb.com)
-[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
-
 ---
 
 </div>
